@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>slugcat — two-chunk rig</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #070b0a; overflow: hidden; }
+  html, body { margin: 0; height: 100%; background: #080808; overflow: hidden; }
   body { cursor: default; }
   canvas { display: block; width: 100vw; height: 100vh; }
 </style>
@@ -33,28 +33,79 @@ const HEAD_R = 15.5;
 const UPPER_R = 12.5;
 const HIP_R = 16;
 
-const ZOOM = 2.4;
-const FLOOR_SCREEN = 410;
+const ZOOM = 0.75;
+const FLOOR_SCREEN = 500;
 
-const WALK = 72;
-const RUN = 146;
+const WALK = 350;
+const RUN = 650;
 const GRAVITY = 1600;
+const PLATFORMS = [
+  { x: -60, y: 380, w: 125 },
+  { x: 230, y: 355, w: 140 },
+  { x: -360, y: 350, w: 132 },
+  { x: 40, y: 318, w: 132 },
+  { x: 455, y: 300, w: 126 },
+  { x: -180, y: 294, w: 158 },
+  { x: -490, y: 270, w: 132 },
+  { x: 260, y: 268, w: 145 },
+  { x: -290, y: 240, w: 142 },
+  { x: 80, y: 238, w: 132 },
+  { x: 500, y: 232, w: 112 },
+  { x: -560, y: 210, w: 138 },
+  { x: -30, y: 205, w: 155 },
+  { x: 330, y: 198, w: 136 },
+  { x: -350, y: 175, w: 146 },
+  { x: 180, y: 170, w: 152 },
+  { x: -570, y: 145, w: 132 },
+  { x: -70, y: 140, w: 145 },
+  { x: 400, y: 135, w: 150 },
+  { x: -330, y: 108, w: 153 },
+  { x: 140, y: 104, w: 128 },
+  { x: 520, y: 98, w: 104 },
+  { x: -560, y: 74, w: 132 },
+  { x: -150, y: 68, w: 148 },
+  { x: 270, y: 62, w: 152 },
+  { x: -380, y: 36, w: 150 },
+  { x: 60, y: 30, w: 136 },
+  { x: 480, y: 24, w: 122 },
+  { x: -580, y: -4, w: 126 },
+  { x: -200, y: -10, w: 154 },
+  { x: 240, y: -16, w: 138 },
+  { x: -430, y: -42, w: 154 },
+  { x: 0, y: -48, w: 152 },
+  { x: 420, y: -54, w: 140 },
+  { x: -260, y: -82, w: 150 },
+  { x: 170, y: -88, w: 144 },
+  { x: 520, y: -94, w: 104 },
+  { x: -520, y: -122, w: 142 },
+  { x: -100, y: -128, w: 154 },
+  { x: 330, y: -134, w: 150 },
+  { x: -330, y: -162, w: 150 },
+  { x: 80, y: -168, w: 144 },
+  { x: 470, y: -174, w: 132 },
+  { x: -580, y: -202, w: 126 },
+  { x: -180, y: -208, w: 154 },
+  { x: 220, y: -214, w: 140 },
+  { x: -400, y: -242, w: 150 },
+  { x: 0, y: -248, w: 150 },
+  { x: 390, y: -254, w: 144 },
+];
 
 const COL = {
-  bg: '#0c1211',
-  ground: '#080d0c',
-  ink: '#07100d',
-  body: '#f1eee1',
-  bodyWarm: '#e5e1d4',
-  bridge: '#d5d2c5',
-  far: '#7f8b83',
-  farInk: '#19221e',
-  eye: '#0a110f',
-  floor: 'rgba(224,231,214,0.20)',
-  tick: 'rgba(224,231,214,0.075)',
-  tickStrong: 'rgba(224,231,214,0.16)',
-  accent: '#d9c28b',
-  moss: '#a9d7c2',
+  bg: '#101010',
+  ground: '#080808',
+  ink: '#050505',
+  body: '#f2f2f2',
+  bodyWarm: '#d8d8d8',
+  bridge: '#c8c8c8',
+  far: '#a0a0a0',
+  farInk: '#202020',
+  eye: '#080808',
+  floor: 'rgba(235,235,235,0.20)',
+  tick: 'rgba(235,235,235,0.075)',
+  tickStrong: 'rgba(235,235,235,0.16)',
+  accent: '#c8c8c8',
+  moss: '#c0c0c0',
 };
 
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -105,7 +156,6 @@ window.addEventListener('resize', resize);
 
 const keys = Object.create(null);
 const press = { jump: false };
-const ui = { hud: true };
 
 const JUMP_KEYS = new Set(['Space', 'KeyW', 'ArrowUp']);
 const MOVE_KEYS = new Set(['KeyA', 'KeyD', 'ArrowLeft', 'ArrowRight', 'Space', 'ArrowUp', 'ArrowDown']);
@@ -115,7 +165,6 @@ window.addEventListener('keydown', e => {
   if (!e.repeat) {
     if (JUMP_KEYS.has(e.code)) press.jump = true;
     if (e.code === 'KeyR') resetWorld();
-    if (e.code === 'KeyH') ui.hud = !ui.hud;
     if (e.code === 'KeyF') {
       if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
       else document.exitFullscreen?.();
@@ -152,6 +201,7 @@ class Slugcat {
   reset() {
     this.x = 0;
     this.y = FLOOR - RIDE;
+    this.surfaceY = FLOOR;
     this.vx = 0;
     this.vy = 0;
     this.facing = 1;
@@ -231,12 +281,12 @@ class Slugcat {
     if (leg.front) {
       return {
         x: anchor.x + this.facing * (10 + this.act * 10) + side,
-        y: FLOOR - 1.5,
+        y: (this.surfaceY || FLOOR) - 1.5,
       };
     }
     return {
       x: anchor.x - this.facing * (1.5 - this.act * 2.5) + side,
-      y: FLOOR - 1.5,
+      y: (this.surfaceY || FLOOR) - 1.5,
     };
   }
 
@@ -328,15 +378,15 @@ class Slugcat {
       if (move !== 0) {
         const target = move * maxSpeed;
         const skid = sign(move) !== sign(this.vx) && Math.abs(this.vx) > 12;
-        this.vx = approach(this.vx, target, (skid ? 2100 : 1450) * dt);
+        this.vx = approach(this.vx, target, (skid ? 3600 : 2800) * dt);
       } else {
-        this.vx = approach(this.vx, 0, 1900 * dt);
+        this.vx = approach(this.vx, 0, 2600 * dt);
       }
     } else {
       if (move !== 0) {
         const target = move * RUN * 0.96;
         if (Math.abs(this.vx) < Math.abs(target) || sign(this.vx) !== sign(target)) {
-          this.vx = approach(this.vx, target, 480 * dt);
+          this.vx = approach(this.vx, target, 1100 * dt);
         }
       }
       this.vx *= 1 - 0.08 * dt;
@@ -352,7 +402,7 @@ class Slugcat {
     if (ctrl.jump) this.jumpHeld = true;
 
     if (this.jumpBuffer > 0 && (this.grounded || this.coyote > 0)) {
-      this.vy = -(ctrl.sprint ? 430 : 382);
+        this.vy = -(ctrl.sprint ? 500 : 440);
       this.vx += this.facing * (ctrl.sprint ? 24 : 10);
       this.grounded = false;
       this.coyote = 0;
@@ -368,6 +418,7 @@ class Slugcat {
     }
 
     // vertical motion
+    const oldY = this.y;
     if (!this.grounded) {
       let g = GRAVITY;
       if (this.vy < 0 && ctrl.jump) g *= 0.72;
@@ -375,9 +426,18 @@ class Slugcat {
       this.vy = Math.min(this.vy + g * dt, 1250);
       this.y += this.vy * dt;
 
-      if (this.y >= FLOOR - RIDE) {
+      let landing = null;
+      if (this.vy > 0) {
+        for (const p of PLATFORMS) {
+          if (this.x + 8 > p.x && this.x - 8 < p.x + p.w && oldY + RIDE <= p.y && this.y + RIDE >= p.y) {
+            if (!landing || p.y < landing.y) landing = p;
+          }
+        }
+      }
+      if (landing || this.y >= FLOOR - RIDE) {
         const impact = this.vy;
-        this.y = FLOOR - RIDE;
+        this.surfaceY = landing ? landing.y : FLOOR;
+        this.y = this.surfaceY - RIDE;
         this.vy = 0;
         this.grounded = true;
         this.coyote = 0;
@@ -392,7 +452,9 @@ class Slugcat {
         this.justLanded = true;
       }
     } else {
-      this.y = FLOOR - RIDE;
+      const stillOnPlatform = this.surfaceY === FLOOR || PLATFORMS.some(p => this.x + 8 > p.x && this.x - 8 < p.x + p.w && Math.abs(this.y + RIDE - p.y) < 1);
+      if (!stillOnPlatform) { this.grounded = false; this.vy = 0; this.idleTimer = 0; }
+      else this.y = this.surfaceY - RIDE;
     }
 
     // idle / standing
@@ -560,7 +622,7 @@ class Slugcat {
     const dur = clamp(0.19 - this.act * 0.085, 0.095, 0.2);
     const lead = (leg.front ? 6 : 4) + speed * dur * 0.85;
     let tx = home.x + this.facing * lead;
-    const ty = FLOOR - 1.5;
+    const ty = (this.surfaceY || FLOOR) - 1.5;
     const maxReach = (leg.l1 + leg.l2) * 0.92;
     const dy = ty - anchor.y;
     if (dy < maxReach) {
@@ -752,13 +814,6 @@ class Slugcat {
       });
     }
 
-    ctx.fillStyle = COL.ink;
-    for (const c of circles) {
-      ctx.beginPath();
-      ctx.arc(c.x, c.y, c.r + 2.4, 0, TAU);
-      ctx.fill();
-    }
-
     ctx.fillStyle = COL.body;
     for (const c of circles) {
       ctx.beginPath();
@@ -770,7 +825,7 @@ class Slugcat {
     for (const leg of this.legs) {
       if (leg.far) continue;
       const a = leg.hip;
-      ctx.fillStyle = 'rgba(7,16,13,0.14)';
+      ctx.fillStyle = 'rgba(0,0,0,0.14)';
       ctx.beginPath();
       ctx.arc(a.x, a.y, leg.front ? 4.2 : 5.4, 0, TAU);
       ctx.fill();
@@ -794,32 +849,11 @@ class Slugcat {
     this.drawEar(ctx, 8.0, -HEAD_R * 0.82, 5.4, 2.5, false);
 
     // eyes
-    const open = clamp(1 - this.blink * 0.96, 0, 1);
-    const near = { x: HEAD_R * 0.45, y: -2.2, rx: 2.9, ry: 4.0 * open };
-    const far = { x: HEAD_R * 0.14, y: -4.7, rx: 2.3, ry: 3.2 * open };
+    const near = { x: HEAD_R * 0.48, y: -2.0 };
 
     ctx.fillStyle = COL.eye;
     ctx.beginPath();
-    ctx.ellipse(far.x, far.y, far.rx, Math.max(0.25, far.ry), 0, 0, TAU);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(near.x, near.y, near.rx, Math.max(0.25, near.ry), 0, 0, TAU);
-    ctx.fill();
-
-    if (open > 0.25) {
-      ctx.fillStyle = 'rgba(255,252,236,0.55)';
-      ctx.beginPath();
-      ctx.arc(near.x - 0.9, near.y - near.ry * 0.38, 0.8, 0, TAU);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(far.x - 0.7, far.y - far.ry * 0.38, 0.6, 0, TAU);
-      ctx.fill();
-    }
-
-    // nose
-    ctx.fillStyle = COL.eye;
-    ctx.beginPath();
-    ctx.ellipse(HEAD_R * 0.92, 3.4, 1.7, 1.25, -0.12, 0, TAU);
+    ctx.arc(near.x, near.y, 1.45, 0, TAU);
     ctx.fill();
 
     ctx.restore();
@@ -832,7 +866,7 @@ class Slugcat {
     ctx.rotate(flop);
     this.circle(ctx, 0, 0, r, far ? COL.bodyWarm : COL.body, far ? COL.farInk : COL.ink, far ? 1.6 : 1.9);
     // a quiet inner crease, not a pupil
-    ctx.strokeStyle = far ? 'rgba(53,64,58,0.35)' : 'rgba(53,64,58,0.45)';
+    ctx.strokeStyle = far ? 'rgba(30,30,30,0.35)' : 'rgba(30,30,30,0.45)';
     ctx.lineWidth = 0.8;
     ctx.beginPath();
     ctx.arc(0, -0.6, inner, Math.PI * 0.2, Math.PI * 0.8);
@@ -853,20 +887,6 @@ class Slugcat {
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    // outline pass
-    ctx.strokeStyle = ink;
-    ctx.lineWidth = w1 + 2;
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(k.x, k.y);
-    ctx.stroke();
-    ctx.lineWidth = w2 + 1.7;
-    ctx.beginPath();
-    ctx.moveTo(k.x, k.y);
-    ctx.lineTo(f.x, f.y);
-    ctx.stroke();
-
-    // fill pass
     ctx.strokeStyle = fill;
     ctx.lineWidth = w1;
     ctx.beginPath();
@@ -881,22 +901,18 @@ class Slugcat {
 
     // joint and paw
     ctx.fillStyle = fill;
-    ctx.strokeStyle = ink;
-    ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.arc(k.x, k.y, w2 * 0.55, 0, TAU);
     ctx.fill();
-    ctx.stroke();
 
     const paw = leg.front ? 4.7 : 5.3;
     ctx.beginPath();
     ctx.arc(f.x, f.y, paw, 0, TAU);
     ctx.fill();
-    ctx.stroke();
 
     // a darker socket circle for the near limb
     if (!far) {
-      ctx.fillStyle = 'rgba(7,16,13,0.32)';
+      ctx.fillStyle = 'rgba(0,0,0,0.32)';
       ctx.beginPath();
       ctx.arc(a.x, a.y, 2.4, 0, TAU);
       ctx.fill();
@@ -918,16 +934,6 @@ class Slugcat {
       pts.push({ x: n.x + wave + slow, y: n.y - lift });
     }
 
-    for (let i = 1; i < this.tailLen; i++) {
-      const a = pts[i - 1];
-      const b = pts[i];
-      ctx.strokeStyle = COL.ink;
-      ctx.lineWidth = this.tailRadii[i - 1] + this.tailRadii[i] + 3;
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.stroke();
-    }
     for (let i = 1; i < this.tailLen; i++) {
       const a = pts[i - 1];
       const b = pts[i];
@@ -956,12 +962,9 @@ class Slugcat {
 
   circle(ctx, x, y, r, fill, stroke, lw) {
     ctx.fillStyle = fill;
-    ctx.strokeStyle = stroke;
-    ctx.lineWidth = lw;
     ctx.beginPath();
     ctx.arc(x, y, r, 0, TAU);
     ctx.fill();
-    ctx.stroke();
   }
 
   stateName() {
@@ -1021,8 +1024,7 @@ function tick(dt) {
 
   rig.update(dt, ctrl);
 
-  const targetCam = rig.x + rig.facing * 18 + clamp(rig.vx * 0.16, -38, 38);
-  cam.x = damp(cam.x, targetCam, 4.2, dt);
+  cam.x = 0;
 }
 
 // ---------------------------------------------------------------- render
@@ -1035,6 +1037,18 @@ function drawStage() {
 
   ctx.fillStyle = COL.floor;
   ctx.fillRect(0, FLOOR_SCREEN, VW, 1);
+
+  ctx.save();
+  ctx.setTransform(ZOOM, 0, 0, ZOOM, VW / 2 - cam.x * ZOOM, FLOOR_SCREEN - FLOOR * ZOOM);
+  for (const p of PLATFORMS) {
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.fillRect(p.x, p.y + 3, p.w, 8);
+    ctx.fillStyle = '#292929';
+    ctx.fillRect(p.x, p.y, p.w, 7);
+    ctx.fillStyle = '#606060';
+    ctx.fillRect(p.x, p.y, p.w, 2);
+  }
+  ctx.restore();
 
   // floor ticks show horizontal motion without adding a background
   const spacing = 64;
@@ -1049,78 +1063,12 @@ function drawStage() {
   }
 }
 
-function drawHud() {
-  if (!ui.hud) return;
-  const dpr = view.dpr;
-  const vx = view.vx;
-  const vy = view.vy;
-  const vw = view.vw;
-  const vh = view.vh;
-  if (vw < 240 || vh < 160) return;
-
-  const sc = clamp(vh / 540, 0.9, 1.8);
-  sctx.save();
-  sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  sctx.textBaseline = 'alphabetic';
-  sctx.textAlign = 'left';
-
-  const pad = clamp(vw * 0.028, 16, 30) * sc;
-  const left = vx + pad;
-  const right = vx + vw - pad;
-  const top = vy + pad;
-  const bottom = vy + vh - pad;
-
-  sctx.font = `600 ${12 * sc}px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace`;
-  sctx.fillStyle = 'rgba(240,238,224,0.86)';
-  drawSpaced('SLUGCAT', left, top + 12 * sc, 3.4 * sc);
-  sctx.font = `400 ${7.4 * sc}px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace`;
-  sctx.fillStyle = 'rgba(221,226,209,0.34)';
-  drawSpaced('TWO-CHUNK PROCEDURAL RIG', left, top + 25 * sc, 1.2 * sc);
-
-  const state = rig.stateName().toUpperCase();
-  sctx.font = `600 ${8.4 * sc}px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace`;
-  const air = !rig.grounded;
-  sctx.fillStyle = air ? `rgba(217,194,139,0.92)` : 'rgba(169,215,194,0.78)';
-  drawSpacedRight(state, right, top + 11 * sc, 1.7 * sc);
-
-  sctx.fillStyle = 'rgba(211,224,207,0.12)';
-  sctx.fillRect(right - 120 * sc, top + 20 * sc, 120 * sc, 1);
-
-  sctx.font = `400 ${7.2 * sc}px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace`;
-  sctx.fillStyle = 'rgba(216,224,208,0.32)';
-  drawSpacedRight('A / D  MOVE     SHIFT  RUN     SPACE  JUMP', right, bottom - 4 * sc, 0.2 * sc);
-
-  sctx.fillStyle = 'rgba(216,224,208,0.24)';
-  drawSpaced('R RESET     H HUD     F FULLSCREEN', left, bottom - 4 * sc, 0.2 * sc);
-
-  sctx.restore();
-}
-
-function drawSpaced(text, x, y, spacing) {
-  let cx = x;
-  for (const ch of text) {
-    sctx.fillText(ch, cx, y);
-    cx += sctx.measureText(ch).width + spacing;
-  }
-}
-
-function drawSpacedRight(text, x, y, spacing) {
-  let total = 0;
-  for (const ch of text) total += sctx.measureText(ch).width + spacing;
-  total -= spacing;
-  let cx = x - total;
-  for (const ch of text) {
-    sctx.fillText(ch, cx, y);
-    cx += sctx.measureText(ch).width + spacing;
-  }
-}
-
 function render() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalAlpha = 1;
   drawStage();
 
-  // flat room, camera only moves horizontally
+  // fixed view: the level stays still while the character moves
   ctx.save();
   ctx.setTransform(
     ZOOM, 0, 0, ZOOM,
@@ -1135,11 +1083,10 @@ function render() {
 
   sctx.setTransform(1, 0, 0, 1, 0, 0);
   sctx.imageSmoothingEnabled = true;
-  sctx.fillStyle = '#070b0a';
+  sctx.fillStyle = '#080808';
   sctx.fillRect(0, 0, screen.width, screen.height);
   sctx.drawImage(off, view.ox, view.oy, VW * view.scale, VH * view.scale);
 
-  drawHud();
 }
 
 // ---------------------------------------------------------------- loop

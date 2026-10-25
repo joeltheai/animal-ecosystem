@@ -3,7 +3,7 @@
 A single-file, dependency-free **procedural slugcat rig study**.
 
 Open `index.html` in a browser. There is no build step and no external assets.
-The stage is intentionally flat: one creature, one ground line, nothing else.
+The stage has a fixed screen view with a spread of platforms at varied heights.
 Everything is drawn with circles, lines, and a handful of simple shapes so the
 motion is easier to read.
 
@@ -15,12 +15,11 @@ motion is easier to read.
 | `Shift` | Run |
 | `Space` / `W` / `↑` | Jump — hold for a higher jump |
 | `R` | Reset |
-| `H` | Hide HUD |
 | `F` | Fullscreen |
 
 The character starts seated. Move and it drops onto all fours; stop and it sits
-back up. There is no scenery, follower, water, audio, or collectible to distract
-from the animation.
+back up. Platforms fill the fixed view so you can climb without the camera following
+the character.
 
 ## What is being simulated
 
@@ -61,6 +60,7 @@ Everything is in `index.html`:
 
 - `RIDE`, `BODY_LEN`, `HEAD_R`, `HIP_R` — the character's proportions.
 - `WALK`, `RUN`, `GRAVITY` — locomotion feel.
+- `PLATFORMS` — the climb route and spacing.
 - `Slugcat.update` — acceleration, jump, stand blend, spine spring, squash.
 - `Slugcat.updateLeg` / `startStep` / `scheduleGait` — foot planting, step arcs,
   diagonal-pair alternation, and stride length.
