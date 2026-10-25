@@ -1,114 +1,88 @@
 # animal-ecosystem
 
-A single-file, dependency-free **procedural Rain World character study**.
+A single-file, dependency-free **procedural slugcat rig study**.
 
-Open `index.html` in any modern browser. No build step, no packages, no assets.
-Everything you see is drawn and animated at runtime on a canvas: the slugcat, the
-slugpup, the rain, the ruins, the tail physics, and the wobble in the grass.
-
-The first version of this file was a wireframe lizard test. This one is a
-from-scratch rework of the character, the rig, the locomotion, and the world
-around them.
+Open `index.html` in a browser. There is no build step and no external assets.
+The stage is intentionally flat: one creature, one ground line, nothing else.
+Everything is drawn with circles, lines, and a handful of simple shapes so the
+motion is easier to read.
 
 ## Controls
 
 | Input | Action |
 | --- | --- |
 | `A` / `D` or `←` / `→` | Move |
-| `Shift` | Sprint |
-| `Space`, `W`, or `↑` | Jump — hold for a higher jump |
-| `S` or `↓` | Slide (while running) / crouch |
-| Mouse | Look — head, eyes, and ears follow |
-| `Q` | Squeak (the pup reacts) |
-| `R` | Reset the world |
-| `V` | Toggle the procedural rig view |
-| `H` | Toggle HUD |
-| `M` | Toggle sound |
+| `Shift` | Run |
+| `Space` / `W` / `↑` | Jump — hold for a higher jump |
+| `R` | Reset |
+| `H` | Hide HUD |
 | `F` | Fullscreen |
 
-Sound starts on the first key press or click. The slugpup follows you on its own.
+The character starts seated. Move and it drops onto all fours; stop and it sits
+back up. There is no scenery, follower, water, audio, or collectible to distract
+from the animation.
 
-## What's going on
+## What is being simulated
 
-### The slugcat (and the pup)
+The character follows the split Rain World uses between simulation and cosmetic
+animation:
 
-The character is built from a tiny physics core plus cosmetic layers, following
-Rain World's split between simulation and decoration:
+- **Two-chunk core** — a hip and a chest, connected by a spine whose elevation is
+  driven by a damped spring. The body leans with speed, loosens in the air, and
+  the chest/head lag behind the hips. This is the part that actually moves the
+  creature around.
+- **Paper-doll torso** — the visible body is a short chain of overlapping circles
+  drawn over the two-chunk core. A single dark pass behind them gives the body one
+  outer silhouette, with a separate head circle, ears, eyes, and nose.
+- **Four cosmetic IK limbs** — thin arms and short legs with two-bone IK, joints
+  drawn as circles. Feet stay planted while the body moves, then take a step when
+  they fall too far behind. A small scheduler alternates the two diagonal pairs so
+  one pair is always planted; no all-four-legs-in-the-air glitch.
+- **Tail** — a Verlet chain with stiffness that falls off toward the tip, plus
+  ground collision and a cosmetic traveling wave. It drags when running, curls up
+  when seated, and streams behind in the air.
+- **Stand / crawl** — when idle, the chest rises, the head settles above it, and
+  the front paws hang. When movement starts, the body drops toward the ground,
+  the paws lower, and the walk cycle takes over.
+- **Jump and fall** — variable jump height, coyote time, a jump buffer, a stretch
+  on takeoff, a squash on landing, tucked limbs on short jumps, and reaching /
+  flailing arms and legs after a long fall.
+- **Face** — blinks, damped ears that flop with movement and air, and a tiny
+  head-tilt reaction to vertical velocity.
+- **Step follow-through** — each footfall pumps a small vertical spring in the
+  body, and the whole rig squashes around the floor on impact.
 
-- **Body** — a compact path-following torso with procedural ripple, a leaning
-  upright/scurrying pose, breathing, squash and stretch, and soft socket shading.
-  The chest is high, the hips low, and the body shifts onto two feet when idle.
-- **Hind legs** — analytic two-bone IK with planted feet. Steps are triggered by
-  displacement, predicted for the speed, coordinated so one diagonal pair stays
-  on the ground, and lifted in a smooth arc with dust and little landing puffs.
-- **Arms** — separate cosmetic IK limbs that swing during the scurry, tuck during
-  short jumps, and reach/flail toward the ground after a long fall. The air-flail
-  meter grows with time in the air and speed, as described in the Rain World
-  devlog (Update 145).
-- **Tail** — a Verlet chain with declining stiffness toward the tip, ground
-  collision, a lazy idle curl, and a running lift. This is the "four balls of
-  physics and thirteen triangles" idea from the devlog, done in canvas.
-- **Head** — a spring-followed head with tilt, mouse tracking, blinks, a squeak
-  mouth, and two damped ear springs that twitch, sweep back when falling, and
-  react to squeaks and landings.
-- **Pup** — the same rig at 0.62 scale, driven by a small follow AI. It trots
-  behind, looks at you, jumps when you jump or squeak, and catches up smoothly.
+The body/limb positions are recomputed every frame. There is no walk-cycle sprite
+sheet and no keyframed skeleton animation.
 
-Movement has acceleration, skidding, sprint, slope gravity, coyote time, a jump
-buffer, variable jump height, slide momentum, a slide jump, and ground snapping
-on gentle downhills.
+## Tweaking
 
-### The world
+Everything is in `index.html`:
 
-- Endlessly generated rolling terrain with one-way industrial platforms.
-- Three parallax layers of ruins, a viaduct, pipes, fans, catwalks, and cables.
-- A framing foreground overhang and ledge, with reeds and hanging vines.
-- Rain with ground ripples, splashes, drifting fog, dust, motes, batflies, and
-  occasional lightning with thunder.
-- Procedural audio: rain, wind, a low drone, footsteps, jump/land, squeak, thunder.
+- `RIDE`, `BODY_LEN`, `HEAD_R`, `HIP_R` — the character's proportions.
+- `WALK`, `RUN`, `GRAVITY` — locomotion feel.
+- `Slugcat.update` — acceleration, jump, stand blend, spine spring, squash.
+- `Slugcat.updateLeg` / `startStep` / `scheduleGait` — foot planting, step arcs,
+  diagonal-pair alternation, and stride length.
+- `Slugcat.updateTail` / `drawTail` — the physical tail and its cosmetic wave.
+- `drawBody` / `drawHead` — the paper-doll body and face.
+- `ZOOM`, `FLOOR_SCREEN` — the framerate-independent stage framing.
 
-Press `V` to see the actual rig: body path, IK chains, planted-foot targets,
-tail chain, velocity vector, and ground contact.
+`window.__slug` exposes the rig, camera, and reset function in the console.
 
-## Tweaking it
+## Reference notes
 
-Everything is in `index.html`, in one script. The useful knobs are near the top:
-
-- `walkSpeed`, `runSpeed`, `gravity` — general movement feel.
-- `TERRAIN_BASE` — the world's ground line.
-- `Slugcat` constructor / `reset` — body size (`scale`), spine length and radii,
-  leg lengths, tail length and thickness.
-- `updateSpine`, `updateLegs`, `updateTail`, `updateFace` — the animation layers.
-- `makeBolt`, `drawFarSkyline`, `drawMidRuins`, `drawViaduct`, `drawGround`,
-  `drawPlatform` — environment generation and art.
-- `window.__slug` in the console exposes the player, pup, camera, and world
-  helpers for tinkering.
-
-The character and world are deterministic enough to feel like a place, but the
-small details are intentionally organic and slightly different each run.
-
-## References
-
-This is a fan-made procedural study, not affiliated with Videocult or Akupara.
-No Rain World sprites or assets are used; the visuals are original canvas shapes
-generated at runtime.
-
-- Joar Jakobsson & James Therrien, **The Rain World Animation Process** (GDC talk)
+- Joar Jakobsson & James Therrien, **The Rain World Animation Process** (GDC):
   https://www.youtube.com/watch?v=sVntwsrjNe4
-- Rain World devlog, especially the player/limb and tail updates:
+- **Rain World Devlog**, especially the tail-stiffness and long-fall arm updates:
   https://candlesign.github.io/Rain-World-Devlog/
 - Unity, **Exploring procedural design in Rain World: The Watcher** — the
   two-spherical-chunk model and cosmetic limbs:
   https://unity.com/blog/exploring-procedural-design-rain-world
-- Rain World Wiki, **Slugcat** and **Movement**, for the body modes, sprite
-  anatomy, and control context:
-  https://rainworld.miraheze.org/wiki/Slugcat
+- Rain World Wiki, **Movement** — upper/lower chunks, body modes, animations:
   https://rainworld.miraheze.org/wiki/Movement
+- Rain World Wiki technical movement pages:
+  https://rainworld.miraheze.org/wiki/User:Alphappy/Live/Movement
 
-## Notes
-
-- The game is a sandbox: there is no score, death, or rain cycle timer. The rain
-  is weather, not a fail state.
-- It is designed for a keyboard and mouse. On narrow screens the HUD collapses
-  the control hints, but the rig itself is the same.
-- If sound does not start, click the page once; browsers require a gesture.
+This is a fan-made procedural study, not affiliated with Videocult or Akupara.
+No Rain World sprites or game assets are used.
