@@ -3,12 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>slugcat — a procedural creature study</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%230b1110'/%3E%3Cpath d='M22 22 L18 10 L28 18 Z' fill='%23f1eee2'/%3E%3Cpath d='M42 22 L46 10 L36 18 Z' fill='%23f1eee2'/%3E%3Ccircle cx='32' cy='38' r='17' fill='%23f1eee2'/%3E%3Ccircle cx='25' cy='35' r='4' fill='%23111715'/%3E%3Ccircle cx='39' cy='35' r='4' fill='%23111715'/%3E%3Ccircle cx='32' cy='44' r='1.5' fill='%23251f1e'/%3E%3C/svg%3E">
+<title>slugcat — two-chunk rig</title>
 <style>
   html, body { margin: 0; height: 100%; background: #070b0a; overflow: hidden; }
-  body { cursor: crosshair; }
-  canvas { display: block; width: 100vw; height: 100vh; image-rendering: pixelated; }
+  body { cursor: default; }
+  canvas { display: block; width: 100vw; height: 100vh; }
 </style>
 </head>
 <body>
@@ -18,70 +17,63 @@
 'use strict';
 
 // ======================================================================
-//  slugcat — procedural creature study
-//  all animation is generated at runtime. there is no walk cycle.
+//  slugcat — two-chunk rig study
+//  One creature, a flat room, no scenery. The body is two physical
+//  chunks; the head, limbs, ears and tail are cosmetic follow-through.
 // ======================================================================
 
 const TAU = Math.PI * 2;
+const VW = 960;
+const VH = 540;
+const FLOOR = 412;
+
+const RIDE = 22;
+const BODY_LEN = 34;
+const HEAD_R = 15.5;
+const UPPER_R = 12.5;
+const HIP_R = 16;
+
+const ZOOM = 2.4;
+const FLOOR_SCREEN = 410;
+
+const WALK = 72;
+const RUN = 146;
+const GRAVITY = 1600;
 
 const COL = {
-  ink:        '#18211f',
-  inkSoft:    '#2a3733',
-  fur:        '#f1eee2',
-  furShade:   '#c6c8be',
-  furDeep:    '#aeb3a9',
-  belly:      '#d9d7ca',
-  highlight:  '#fffdf2',
-  ear:        '#d8b9b0',
-  earDeep:    '#bd958d',
-  eye:        '#111715',
-  nose:       '#251f1e',
-  water:      '#1b2d2d',
-  moss:       '#687966',
-  mossLight:  '#8b9a7c',
-  rust:       '#8a664e',
+  bg: '#0c1211',
+  ground: '#080d0c',
+  ink: '#07100d',
+  body: '#f1eee1',
+  bodyWarm: '#e5e1d4',
+  bridge: '#d5d2c5',
+  far: '#7f8b83',
+  farInk: '#19221e',
+  eye: '#0a110f',
+  floor: 'rgba(224,231,214,0.20)',
+  tick: 'rgba(224,231,214,0.075)',
+  tickStrong: 'rgba(224,231,214,0.16)',
+  accent: '#d9c28b',
+  moss: '#a9d7c2',
 };
-
-const walkSpeed = 70;
-const runSpeed = 145;
-const gravity = 980;
 
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const lerp = (a, b, t) => a + (b - a) * t;
-const invLerp = (a, b, v) => clamp((v - a) / (b - a), 0, 1);
 const smoothstep = t => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
-const approach = (v, target, delta) => v < target ? Math.min(v + delta, target) : Math.max(v - delta, target);
 const damp = (a, b, rate, dt) => lerp(a, b, 1 - Math.exp(-rate * dt));
+const approach = (v, target, delta) => v < target ? Math.min(v + delta, target) : Math.max(v - delta, target);
 const sign = v => v < 0 ? -1 : 1;
-const hash = n => {
-  const s = Math.sin(n * 127.1 + 311.7) * 43758.5453123;
-  return s - Math.floor(s);
-};
-const hash2 = (x, y) => hash(x * 157.31 + y * 113.97 + 7.13);
-const rand = (a, b) => a + Math.random() * (b - a);
 
-if (!CanvasRenderingContext2D.prototype.roundRect) {
-  CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
-    r = Math.min(r, w / 2, h / 2);
-    this.moveTo(x + r, y);
-    this.arcTo(x + w, y, x + w, y + h, r);
-    this.arcTo(x + w, y + h, x, y + h, r);
-    this.arcTo(x, y + h, x, y, r);
-    this.arcTo(x, y, x + w, y, r);
-    this.closePath();
-    return this;
-  };
-}
-
-// ---------------------------------------------------------------- screen
+// ---------------------------------------------------------------- canvas
 
 const screen = document.getElementById('screen');
 const sctx = screen.getContext('2d', { alpha: false });
 const off = document.createElement('canvas');
-const ctx = off.getContext('2d', { alpha: false });
+off.width = VW;
+off.height = VH;
+const ctx = off.getContext('2d');
 
-let VW = 640, VH = 360;
-const view = { scale: 1, ox: 0, oy: 0, dpr: 1, cssW: 0, cssH: 0 };
+const view = { scale: 1, ox: 0, oy: 0, dpr: 1, cssW: 0, cssH: 0, vx: 0, vy: 0, vw: 0, vh: 0 };
 
 function resize() {
   const cssW = window.innerWidth;
@@ -93,21 +85,18 @@ function resize() {
   screen.style.width = cssW + 'px';
   screen.style.height = cssH + 'px';
 
-  VH = 360;
-  VW = clamp(Math.round(VH * cssW / cssH), 500, 940);
-  off.width = VW;
-  off.height = VH;
-
-  view.scale = Math.min(screen.width / VW, screen.height / VH);
-  view.ox = (screen.width - VW * view.scale) / 2;
-  view.oy = (screen.height - VH * view.scale) / 2;
   view.dpr = dpr;
   view.cssW = cssW;
   view.cssH = cssH;
+  view.scale = Math.min(screen.width / VW, screen.height / VH);
+  view.ox = (screen.width - VW * view.scale) / 2;
+  view.oy = (screen.height - VH * view.scale) / 2;
+  view.vx = view.ox / dpr;
+  view.vy = view.oy / dpr;
+  view.vw = VW * view.scale / dpr;
+  view.vh = VH * view.scale / dpr;
 
-  sctx.imageSmoothingEnabled = false;
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
+  sctx.imageSmoothingEnabled = true;
 }
 resize();
 window.addEventListener('resize', resize);
@@ -115,2914 +104,508 @@ window.addEventListener('resize', resize);
 // ---------------------------------------------------------------- input
 
 const keys = Object.create(null);
-const press = { jump: false, down: false, squeak: false };
-const mouse = { cx: 0, cy: 0, x: 0, y: 0, moved: false };
+const press = { jump: false };
+const ui = { hud: true };
 
 const JUMP_KEYS = new Set(['Space', 'KeyW', 'ArrowUp']);
-const DOWN_KEYS = new Set(['KeyS', 'ArrowDown']);
-const PREVENT = new Set(['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+const MOVE_KEYS = new Set(['KeyA', 'KeyD', 'ArrowLeft', 'ArrowRight', 'Space', 'ArrowUp', 'ArrowDown']);
 
 window.addEventListener('keydown', e => {
-  audioUnlock();
-  if (PREVENT.has(e.code)) e.preventDefault();
+  if (MOVE_KEYS.has(e.code)) e.preventDefault();
   if (!e.repeat) {
     if (JUMP_KEYS.has(e.code)) press.jump = true;
-    if (DOWN_KEYS.has(e.code)) press.down = true;
-    if (e.code === 'KeyQ') press.squeak = true;
     if (e.code === 'KeyR') resetWorld();
     if (e.code === 'KeyH') ui.hud = !ui.hud;
-    if (e.code === 'KeyV') ui.rig = !ui.rig;
-    if (e.code === 'KeyM') audio.toggle();
-    if (e.code === 'KeyF') toggleFullscreen();
+    if (e.code === 'KeyF') {
+      if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+      else document.exitFullscreen?.();
+    }
   }
   keys[e.code] = true;
 });
 
 window.addEventListener('keyup', e => { keys[e.code] = false; });
-window.addEventListener('blur', () => {
-  for (const k in keys) keys[k] = false;
-});
+window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 
-window.addEventListener('pointermove', e => {
-  mouse.cx = e.clientX;
-  mouse.cy = e.clientY;
-  mouse.moved = true;
-});
-window.addEventListener('pointerdown', () => { audioUnlock(); audio.init(); });
-
-function toggleFullscreen() {
-  if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
-  else document.exitFullscreen?.();
-}
-
-// ---------------------------------------------------------------- audio
-// tiny procedural soundscape: rain, wind, footsteps, jump, land, thunder.
-
-const audio = {
-  ac: null, master: null, rainGain: null, started: false, muted: false,
-  noise: null, lastStep: 0,
-
-  init() {
-    if (this.started) return;
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return;
-    this.started = true;
-    const ac = this.ac = new AC();
-    this.master = ac.createGain();
-    this.master.gain.value = 0;
-    this.master.connect(ac.destination);
-    this.master.gain.setTargetAtTime(this.muted ? 0 : 0.4, ac.currentTime, 0.7);
-
-    // reusable white noise
-    const nbuf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
-    const nd = nbuf.getChannelData(0);
-    for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
-    this.noise = nbuf;
-
-    // soft looped rain
-    const rainBuf = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate);
-    const rd = rainBuf.getChannelData(0);
-    let brown = 0;
-    for (let i = 0; i < rd.length; i++) {
-      brown = brown * 0.965 + (Math.random() * 2 - 1) * 0.035;
-      rd[i] = brown * 3.2 + (Math.random() * 2 - 1) * 0.045;
-    }
-    const rain = ac.createBufferSource();
-    rain.buffer = rainBuf;
-    rain.loop = true;
-    const rainLP = ac.createBiquadFilter();
-    rainLP.type = 'lowpass';
-    rainLP.frequency.value = 2100;
-    const rainHP = ac.createBiquadFilter();
-    rainHP.type = 'highpass';
-    rainHP.frequency.value = 260;
-    this.rainGain = ac.createGain();
-    this.rainGain.gain.value = 0.14;
-    rain.connect(rainLP).connect(rainHP).connect(this.rainGain).connect(this.master);
-    rain.start();
-
-    // wind
-    const wind = ac.createBufferSource();
-    wind.buffer = rainBuf;
-    wind.loop = true;
-    const windLP = ac.createBiquadFilter();
-    windLP.type = 'lowpass';
-    windLP.frequency.value = 420;
-    const windGain = ac.createGain();
-    windGain.gain.value = 0.10;
-    const windLfo = ac.createOscillator();
-    windLfo.frequency.value = 0.07;
-    const windLfoGain = ac.createGain();
-    windLfoGain.gain.value = 0.045;
-    windLfo.connect(windLfoGain).connect(windGain.gain);
-    wind.connect(windLP).connect(windGain).connect(this.master);
-    wind.start();
-    windLfo.start();
-
-    // low ambient drone
-    for (const [freq, vol, type] of [[55, 0.025, 'sine'], [82.5, 0.014, 'triangle'], [110, 0.008, 'sine']]) {
-      const o = ac.createOscillator();
-      o.type = type;
-      o.frequency.value = freq;
-      const g = ac.createGain();
-      g.gain.value = vol;
-      const lfo = ac.createOscillator();
-      lfo.frequency.value = 0.03 + Math.random() * 0.05;
-      const lg = ac.createGain();
-      lg.gain.value = vol * 0.5;
-      lfo.connect(lg).connect(g.gain);
-      o.connect(g).connect(this.master);
-      o.start(); lfo.start();
-    }
-  },
-
-  unlock() {
-    if (this.started && this.ac && this.ac.state === 'suspended') this.ac.resume();
-  },
-
-  toggle() {
-    this.muted = !this.muted;
-    if (!this.started) { this.muted = false; this.init(); return; }
-    this.master.gain.setTargetAtTime(this.muted ? 0 : 0.4, this.ac.currentTime, 0.15);
-  },
-
-  burst(dur, filterType, freq, q, vol, rate = 1) {
-    if (!this.ac || this.muted) return;
-    const ac = this.ac;
-    const src = ac.createBufferSource();
-    src.buffer = this.noise;
-    src.playbackRate.value = rate;
-    const f = ac.createBiquadFilter();
-    f.type = filterType;
-    f.frequency.value = freq;
-    f.Q.value = q;
-    const g = ac.createGain();
-    const now = ac.currentTime;
-    g.gain.setValueAtTime(0.0001, now);
-    g.gain.exponentialRampToValueAtTime(vol, now + 0.006);
-    g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
-    src.connect(f).connect(g).connect(this.master);
-    src.start(now, Math.random() * 0.5, dur + 0.02);
-  },
-
-  step(intensity = 1, wet = true) {
-    if (!this.ac || this.muted) return;
-    const now = performance.now();
-    if (now - this.lastStep < 45) return;
-    this.lastStep = now;
-    this.burst(0.055 + intensity * 0.03, 'bandpass', wet ? 1100 : 620, 0.8, 0.035 + intensity * 0.02, 0.8 + Math.random() * 0.5);
-  },
-
-  jump() {
-    if (!this.ac || this.muted) return;
-    const ac = this.ac, t = ac.currentTime;
-    const o = ac.createOscillator(), g = ac.createGain();
-    o.type = 'sine';
-    o.frequency.setValueAtTime(260, t);
-    o.frequency.exponentialRampToValueAtTime(430, t + 0.11);
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.035, t + 0.015);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
-    o.connect(g).connect(this.master);
-    o.start(t); o.stop(t + 0.17);
-    this.burst(0.12, 'highpass', 1400, 0.7, 0.022, 1.2);
-  },
-
-  land(intensity = 1) {
-    if (!this.ac || this.muted) return;
-    const ac = this.ac, t = ac.currentTime;
-    const o = ac.createOscillator(), g = ac.createGain();
-    o.type = 'sine';
-    o.frequency.setValueAtTime(115, t);
-    o.frequency.exponentialRampToValueAtTime(42, t + 0.19);
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.08 * clamp(intensity, 0.3, 1.4), t + 0.01);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.26);
-    o.connect(g).connect(this.master);
-    o.start(t); o.stop(t + 0.28);
-    this.burst(0.17, 'lowpass', 780, 0.5, 0.05 * clamp(intensity, 0.3, 1.4), 0.6);
-  },
-
-  squeak() {
-    if (!this.ac || this.muted) return;
-    const ac = this.ac, t = ac.currentTime;
-    const o = ac.createOscillator(), g = ac.createGain();
-    o.type = 'triangle';
-    o.frequency.setValueAtTime(620, t);
-    o.frequency.linearRampToValueAtTime(920, t + 0.055);
-    o.frequency.exponentialRampToValueAtTime(540, t + 0.16);
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.045, t + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
-    o.connect(g).connect(this.master);
-    o.start(t); o.stop(t + 0.2);
-  },
-
-  thunder() {
-    if (!this.ac || this.muted) return;
-    const ac = this.ac, t = ac.currentTime;
-    const src = ac.createBufferSource();
-    src.buffer = this.noise;
-    src.loop = true;
-    const f = ac.createBiquadFilter();
-    f.type = 'lowpass';
-    f.frequency.setValueAtTime(160, t);
-    f.frequency.exponentialRampToValueAtTime(55, t + 1.8);
-    const g = ac.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.12, t + 0.12);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 2.2);
-    src.connect(f).connect(g).connect(this.master);
-    src.start(t, Math.random() * 0.4);
-    src.stop(t + 2.3);
-  },
-};
-
-function audioUnlock() {
-  audio.init();
-  audio.unlock();
-}
-
-// ---------------------------------------------------------------- ui & camera
-
-const ui = { hud: true, rig: false, time: 0 };
-const cam = { x: 0, y: 220, shake: 0, shakeX: 0, shakeY: 0, flash: 0 };
-const worldTime = { t: 0, storm: 0.58, lightningIn: 14 + Math.random() * 16 };
-
-// ======================================================================
-//  world
-// ======================================================================
-
-const TERRAIN_BASE = 272;
-
-function groundY(x) {
-  let y = TERRAIN_BASE;
-  y += Math.sin(x * 0.0024 + 0.3) * 25;
-  y += Math.sin(x * 0.0066 + 2.1) * 9;
-  y += Math.sin(x * 0.0177 + 4.7) * 3.1;
-
-  const k = Math.floor(x / 760);
-  for (let j = -1; j <= 1; j++) {
-    const kk = k + j;
-    const c = kk * 760 + 120 + hash(kk * 1.7 + 3.2) * 520;
-    const h = 8 + hash(kk * 2.3 + 4.7) * 26;
-    const w = 90 + hash(kk * 3.1 + 8.4) * 110;
-    const d = (x - c) / w;
-    if (Math.abs(d) < 1) y -= h * (0.5 + 0.5 * Math.cos(d * Math.PI));
-  }
-  return y;
-}
-
-function groundSlope(x) {
-  return (groundY(x + 3) - groundY(x - 3)) / 6;
-}
-
-// ------------------------------------------------------------- platforms
-
-const platformCache = new Map();
-
-function platformSet(k) {
-  if (platformCache.has(k)) return platformCache.get(k);
-  const out = [];
-  const chance = hash(k * 4.77 + 2.1);
-  if (chance > 0.24) {
-    const x = k * 250 + 58 + hash(k * 1.37 + 1.1) * 110;
-    const w = 46 + hash(k * 2.21 + 6.8) * 60;
-    const cx = x + w * 0.5;
-    const h = 34 + hash(k * 3.73 + 2.4) * 20;
-    const style = hash(k * 6.17 + 9.1) > 0.48 ? 'girder' : 'slab';
-    out.push({ x, y: groundY(cx) - h, w, style, seed: k });
-    if (hash(k * 8.91 + 3.4) > 0.72) {
-      const w2 = 36 + hash(k * 9.3) * 42;
-      const x2 = x + (hash(k * 2.9) > 0.5 ? -w2 * 0.5 : w * 0.55);
-      out.push({
-        x: x2,
-        y: groundY(x2 + w2 * 0.5) - h - 34 - hash(k * 7.2) * 8,
-        w: w2,
-        style: hash(k * 5.5) > 0.5 ? 'girder' : 'slab',
-        seed: k + 0.5,
-      });
-    }
-  }
-  platformCache.set(k, out);
-  return out;
-}
-
-function platformsNear(x0, x1) {
-  const out = [];
-  const k0 = Math.floor(x0 / 250) - 1;
-  const k1 = Math.ceil(x1 / 250) + 1;
-  for (let k = k0; k <= k1; k++) {
-    for (const p of platformSet(k)) {
-      if (p.x + p.w > x0 - 20 && p.x < x1 + 20) out.push(p);
-    }
-  }
-  return out;
-}
-
-// ------------------------------------------------------------- background
-
-function skyGradient() {
-  const g = ctx.createLinearGradient(0, 0, 0, VH);
-  g.addColorStop(0.00, '#2f4246');
-  g.addColorStop(0.28, '#61756f');
-  g.addColorStop(0.55, '#9a9f8e');
-  g.addColorStop(0.76, '#c6b396');
-  g.addColorStop(1.00, '#8a8a76');
-  return g;
-}
-
-function drawSky() {
-  ctx.fillStyle = skyGradient();
-  ctx.fillRect(0, 0, VW, VH);
-
-  // a weak, rain-drowned sun sitting behind the skyline
-  const sunX = VW * 0.70 - cam.x * 0.015;
-  const sunY = VH * 0.33 - (cam.y - 225) * 0.06;
-  const halo = ctx.createRadialGradient(sunX, sunY, 2, sunX, sunY, 175);
-  halo.addColorStop(0, 'rgba(255,238,201,0.40)');
-  halo.addColorStop(0.16, 'rgba(250,228,191,0.20)');
-  halo.addColorStop(0.5, 'rgba(244,220,182,0.07)');
-  halo.addColorStop(1, 'rgba(244,220,182,0)');
-  ctx.fillStyle = halo;
-  ctx.fillRect(0, 0, VW, VH);
-
-  ctx.fillStyle = 'rgba(255,240,207,0.36)';
-  ctx.beginPath();
-  ctx.arc(sunX, sunY, 17, 0, TAU);
-  ctx.fill();
-  ctx.fillStyle = 'rgba(255,246,218,0.20)';
-  ctx.beginPath();
-  ctx.arc(sunX, sunY, 28, 0, TAU);
-  ctx.fill();
-
-  // slow cloud bands, some warm, some dark
-  for (let i = 0; i < 10; i++) {
-    const y = 26 + i * 22 + Math.sin(i * 4.1) * 9;
-    const drift = -cam.x * (0.012 + i * 0.0035) - worldTime.t * (0.7 + i * 0.2);
-    const w = 140 + hash(i * 8.4) * 300;
-    const x = ((drift + i * 193 + hash(i * 2.2) * 380) % (VW + w + 260)) - w - 130;
-    const a = 0.045 + hash(i * 5.7) * 0.07;
-    const dark = hash(i * 2.9) > 0.66;
-    ctx.fillStyle = dark ? `rgba(58,76,74,${a})` : `rgba(238,231,211,${a})`;
-    ctx.beginPath();
-    ctx.ellipse(x + w / 2, y, w / 2, 7 + hash(i + 3) * 13, 0, 0, TAU);
-    ctx.fill();
-  }
-
-  // rain haze near the horizon
-  const haze = ctx.createLinearGradient(0, VH * 0.42, 0, VH * 0.83);
-  haze.addColorStop(0, 'rgba(206,200,179,0)');
-  haze.addColorStop(0.5, 'rgba(206,200,179,0.18)');
-  haze.addColorStop(1, 'rgba(173,177,158,0)');
-  ctx.fillStyle = haze;
-  ctx.fillRect(0, VH * 0.40, VW, VH * 0.46);
-}
-
-function drawFogBand(baseY, thickness, alpha, color, drift = 0) {
-  const g = ctx.createLinearGradient(0, baseY - thickness, 0, baseY + thickness);
-  g.addColorStop(0, `rgba(${color},0)`);
-  g.addColorStop(0.35, `rgba(${color},${alpha})`);
-  g.addColorStop(0.65, `rgba(${color},${alpha * 0.75})`);
-  g.addColorStop(1, `rgba(${color},0)`);
-  ctx.fillStyle = g;
-  ctx.fillRect(0, baseY - thickness, VW, thickness * 2);
-
-  for (let i = 0; i < 5; i++) {
-    const x = ((i * 229 + drift) % (VW + 260)) - 130;
-    const y = baseY + Math.sin(i * 3.1 + drift * 0.01) * thickness * 0.28;
-    const rg = ctx.createRadialGradient(x, y, 1, x, y, 135);
-    rg.addColorStop(0, `rgba(${color},${alpha * 0.45})`);
-    rg.addColorStop(1, `rgba(${color},0)`);
-    ctx.fillStyle = rg;
-    ctx.beginPath();
-    ctx.ellipse(x, y, 140, thickness * 0.62, 0, 0, TAU);
-    ctx.fill();
-  }
-}
-
-function drawLightShafts() {
-  const sunX = VW * 0.70 - cam.x * 0.015;
-  const sunY = VH * 0.32;
-  ctx.save();
-  ctx.globalCompositeOperation = 'screen';
-  for (let i = 0; i < 3; i++) {
-    const dx = -95 - i * 74;
-    const width = 28 + i * 16;
-    const g = ctx.createLinearGradient(sunX, sunY, sunX + dx, VH + 40);
-    g.addColorStop(0, 'rgba(247,226,184,0.12)');
-    g.addColorStop(0.55, 'rgba(238,215,174,0.055)');
-    g.addColorStop(1, 'rgba(220,200,165,0)');
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.moveTo(sunX + i * 38 - 8, sunY);
-    ctx.lineTo(sunX + i * 38 + width, sunY);
-    ctx.lineTo(sunX + dx + width * 2.2, VH + 60);
-    ctx.lineTo(sunX + dx - width * 0.5, VH + 60);
-    ctx.closePath();
-    ctx.fill();
-  }
-  ctx.restore();
-}
-
-function drawFarSkyline() {
-  const f = 0.10;
-  const baseY = VH * 0.585 - (cam.y - 225) * 0.10;
-
-  ctx.save();
-  ctx.translate(VW / 2 - cam.x * f, baseY);
-  const left = cam.x * f - VW / 2 - 180;
-  const right = cam.x * f + VW / 2 + 180;
-  const k0 = Math.floor(left / 175) - 1;
-  const k1 = Math.ceil(right / 175) + 1;
-
-  // a farther, softer row of structures
-  for (let k = Math.floor(left / 240) - 1; k <= Math.ceil(right / 240) + 1; k++) {
-    if (hash(k * 5.17 + 2.9) < 0.32) continue;
-    const x = k * 240 + hash(k * 1.9) * 90;
-    const w = 60 + hash(k * 3.3 + 1.2) * 120;
-    const h = 24 + hash(k * 6.1 + 4.8) * 55;
-    ctx.fillStyle = `rgba(104,113,101,${0.10 + hash(k * 2.2) * 0.08})`;
-    ctx.beginPath();
-    ctx.moveTo(x, 8);
-    ctx.lineTo(x, -h);
-    ctx.lineTo(x + w * 0.28, -h - 8);
-    ctx.lineTo(x + w * 0.34, -h + 2);
-    ctx.lineTo(x + w * 0.8, -h);
-    ctx.lineTo(x + w, -h * 0.7);
-    ctx.lineTo(x + w, 8);
-    ctx.closePath();
-    ctx.fill();
-    if (hash(k * 8.2) > 0.5) {
-      ctx.fillRect(x + w * 0.6, -h - 14, 2, 16);
-    }
-  }
-
-  for (let k = k0; k <= k1; k++) {
-    const r = hash(k * 3.13 + 1.7);
-    const x = k * 175 + hash(k * 1.37 + 0.4) * 70;
-    const w = 48 + hash(k * 2.19 + 5.5) * 105;
-    const h = 62 + hash(k * 4.41 + 2.2) * 185;
-    const kind = Math.floor(hash(k * 7.7 + 3.8) * 4);
-    const warm = hash(k * 7.1 + 3.4) > 0.58;
-    const col = warm
-      ? `rgba(128,113,94,${0.30 + hash(k * 1.9) * 0.2})`
-      : `rgba(88,106,100,${0.30 + hash(k * 1.9) * 0.2})`;
-
-    ctx.fillStyle = col;
-    ctx.beginPath();
-
-    if (kind === 0) {
-      // broken residential slab
-      ctx.moveTo(x, 12);
-      ctx.lineTo(x, -h * 0.72);
-      ctx.lineTo(x + w * 0.14, -h * 0.72);
-      ctx.lineTo(x + w * 0.19, -h);
-      ctx.lineTo(x + w * 0.55, -h * 0.94);
-      ctx.lineTo(x + w * 0.62, -h * 0.73);
-      ctx.lineTo(x + w, -h * 0.77);
-      ctx.lineTo(x + w, 12);
-    } else if (kind === 1) {
-      // cylindrical cistern
-      ctx.moveTo(x + w * 0.1, 12);
-      ctx.lineTo(x + w * 0.1, -h * 0.8);
-      ctx.quadraticCurveTo(x + w * 0.5, -h * 1.02, x + w * 0.9, -h * 0.8);
-      ctx.lineTo(x + w * 0.9, 12);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillRect(x + w * 0.48, -h * 0.96, 2, 18);
-      ctx.beginPath();
-    } else if (kind === 2) {
-      // tall chimney / pipe
-      ctx.moveTo(x + w * 0.28, 12);
-      ctx.lineTo(x + w * 0.34, -h * 1.18);
-      ctx.lineTo(x + w * 0.62, -h * 1.18);
-      ctx.lineTo(x + w * 0.68, 12);
-    } else {
-      // low, wide industrial block
-      ctx.moveTo(x, 12);
-      ctx.lineTo(x, -h * 0.45);
-      ctx.lineTo(x + w * 0.2, -h * 0.45);
-      ctx.lineTo(x + w * 0.22, -h * 0.63);
-      ctx.lineTo(x + w * 0.74, -h * 0.63);
-      ctx.lineTo(x + w * 0.78, -h * 0.4);
-      ctx.lineTo(x + w, -h * 0.4);
-      ctx.lineTo(x + w, 12);
-    }
-    ctx.closePath();
-    ctx.fill();
-
-    // tiny windows
-    ctx.fillStyle = `rgba(20,32,31,${0.17 + r * 0.15})`;
-    const cols = Math.max(1, Math.floor(w / 15));
-    const rows = Math.max(1, Math.floor(h / 19));
-    for (let j = 0; j < rows; j++) {
-      for (let i = 0; i < cols; i++) {
-        if (hash2(k + i * 1.37, j * 2.91) > 0.56) {
-          ctx.fillRect(x + 7 + i * (w - 12) / cols, -h * 0.78 + j * 16, 2, 3);
-        }
-      }
-    }
-
-    if (hash(k * 3.7) > 0.58) {
-      ctx.strokeStyle = col;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(x + w * 0.5, -h * 0.8);
-      ctx.lineTo(x + w * 0.5 + Math.sin(k) * 3, -h - 16 - hash(k) * 18);
-      ctx.stroke();
-      ctx.fillStyle = 'rgba(212,111,82,0.28)';
-      ctx.fillRect(x + w * 0.5 - 1, -h - 19, 2, 2);
-    }
-
-    // occasional warm lit windows
-    if (hash(k * 11.1 + 4.2) > 0.72) {
-      const wx = x + 8 + hash(k * 2.4) * (w - 16);
-      const wy = -h * (0.32 + hash(k * 6.2) * 0.3);
-      ctx.fillStyle = 'rgba(238,184,113,0.32)';
-      ctx.fillRect(wx, wy, 2, 2);
-    }
-  }
-
-  // long service pipes and bridges strung between the towers
-  ctx.lineCap = 'round';
-  for (let j = 0; j < 2; j++) {
-    const y = -24 - j * 31;
-    ctx.strokeStyle = `rgba(82,96,88,${0.26 - j * 0.06})`;
-    ctx.lineWidth = 2.2 - j * 0.6;
-    ctx.beginPath();
-    for (let x = left; x <= right; x += 18) {
-      const yy = y + Math.sin(x * 0.017 + j * 2.2) * 3;
-      if (x === left) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
-    }
-    ctx.stroke();
-    ctx.lineWidth = 1;
-    for (let x = left + 30; x < right; x += 62) {
-      ctx.beginPath();
-      ctx.moveTo(x, y - 3);
-      ctx.lineTo(x, y + 24);
-      ctx.stroke();
-    }
-  }
-
-  // huge ring/turbine silhouettes, half-drowned in the mist
-  for (let k = k0; k <= k1; k++) {
-    if (hash(k * 9.13 + 5.6) < 0.79) continue;
-    const x = k * 175 + hash(k * 3.3) * 80 + 30;
-    const y = -38 - hash(k * 2.4) * 30;
-    const rad = 22 + hash(k * 4.1) * 24;
-    ctx.strokeStyle = 'rgba(88,102,94,0.30)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(x, y, rad, 0, TAU);
-    ctx.stroke();
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(x, y, rad * 0.62, 0, TAU);
-    ctx.stroke();
-    for (let s = 0; s < 6; s++) {
-      const a = s / 6 * TAU + hash(k) * 0.6;
-      ctx.beginPath();
-      ctx.moveTo(x + Math.cos(a) * rad * 0.15, y + Math.sin(a) * rad * 0.15);
-      ctx.lineTo(x + Math.cos(a) * rad * 0.95, y + Math.sin(a) * rad * 0.95);
-      ctx.stroke();
-    }
-    ctx.fillStyle = 'rgba(84,98,90,0.3)';
-    ctx.fillRect(x - 3, y + rad, 6, 60);
-  }
-
-  // swaying cables between rooftops
-  ctx.strokeStyle = 'rgba(49,64,59,0.42)';
-  ctx.lineWidth = 0.9;
-  for (let k = k0; k <= k1; k += 2) {
-    if (hash(k * 8.7 + 1.3) < 0.45) continue;
-    const x0 = k * 175 + 20;
-    const x1 = x0 + 175 + hash(k * 2.1) * 90;
-    const y0 = -40 - hash(k * 3.9) * 80;
-    const y1 = -40 - hash(k * 6.3) * 80;
-    const sag = 12 + hash(k * 4.7) * 18;
-    ctx.beginPath();
-    ctx.moveTo(x0, y0);
-    ctx.quadraticCurveTo((x0 + x1) / 2, Math.max(y0, y1) + sag, x1, y1);
-    ctx.stroke();
-  }
-
-  // obscuring mist at the base
-  const mist = ctx.createLinearGradient(0, -80, 0, 16);
-  mist.addColorStop(0, 'rgba(142,158,150,0)');
-  mist.addColorStop(1, 'rgba(142,158,150,0.28)');
-  ctx.fillStyle = mist;
-  ctx.fillRect(left, -95, right - left, 110);
-  ctx.restore();
-}
-
-function drawMidRuins() {
-  const f = 0.31;
-  const baseY = VH * 0.665 - (cam.y - 225) * 0.20;
-
-  ctx.save();
-  ctx.translate(VW / 2 - cam.x * f, baseY);
-  const left = cam.x * f - VW / 2 - 220;
-  const right = cam.x * f + VW / 2 + 220;
-
-  // long broken arcade wall
-  const step = 74;
-  const k0 = Math.floor(left / step) - 1;
-  const k1 = Math.ceil(right / step) + 1;
-  const wallTop = [];
-  for (let k = k0; k <= k1; k++) {
-    const x = k * step;
-    const h = 76 + hash(k * 2.17 + 6.2) * 52 + Math.sin(k * 1.7) * 12;
-    wallTop.push({ x, h });
-  }
-  const wallGrad = ctx.createLinearGradient(0, -130, 0, 46);
-  wallGrad.addColorStop(0, 'rgba(117,109,88,0.78)');
-  wallGrad.addColorStop(0.6, 'rgba(84,84,68,0.82)');
-  wallGrad.addColorStop(1, 'rgba(64,66,54,0.86)');
-  ctx.fillStyle = wallGrad;
-  ctx.beginPath();
-  ctx.moveTo(wallTop[0].x, 40);
-  for (let i = 0; i < wallTop.length; i++) {
-    const a = wallTop[i];
-    ctx.lineTo(a.x, -a.h);
-    ctx.lineTo(a.x + step * 0.62, -a.h + 3);
-    ctx.lineTo(a.x + step * 0.72, -a.h + 13);
-    ctx.lineTo(a.x + step, -a.h + 5);
-  }
-  ctx.lineTo(wallTop[wallTop.length - 1].x + step, 40);
-  ctx.closePath();
-  ctx.fill();
-
-  // arches cut into the wall (dark, with a rare warm interior)
-  for (let k = k0; k <= k1; k++) {
-    if (hash(k * 5.33 + 2.8) < 0.28) continue;
-    const x = k * step + 20;
-    const h = 30 + hash(k * 3.1) * 19;
-    ctx.fillStyle = 'rgba(36,45,40,0.86)';
-    ctx.beginPath();
-    ctx.moveTo(x, 18);
-    ctx.lineTo(x, -h + 11);
-    ctx.quadraticCurveTo(x + 11, -h - 3, x + 22, -h + 11);
-    ctx.lineTo(x + 22, 18);
-    ctx.closePath();
-    ctx.fill();
-
-    if (hash(k * 8.2 + 4.4) > 0.72) {
-      const lit = ctx.createLinearGradient(0, -h, 0, 18);
-      lit.addColorStop(0, 'rgba(238,181,107,0.24)');
-      lit.addColorStop(1, 'rgba(238,181,107,0)');
-      ctx.fillStyle = lit;
-      ctx.beginPath();
-      ctx.moveTo(x + 2, 18);
-      ctx.lineTo(x + 2, -h + 11);
-      ctx.quadraticCurveTo(x + 11, -h - 1, x + 20, -h + 11);
-      ctx.lineTo(x + 20, 18);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = 'rgba(255,204,133,0.6)';
-      ctx.fillRect(x + 9, -h + 8, 2, 2);
-    }
-  }
-
-  // columns
-  for (let k = k0; k <= k1; k++) {
-    if (hash(k * 4.73 + 1.9) < 0.47) continue;
-    const x = k * step - 4;
-    const h = 92 + hash(k * 6.1) * 58;
-    ctx.fillStyle = 'rgba(55,65,57,0.86)';
-    ctx.fillRect(x, -h, 12 + hash(k) * 7, h + 40);
-    ctx.fillStyle = 'rgba(122,132,116,0.18)';
-    ctx.fillRect(x, -h, 2, h + 40);
-    ctx.fillStyle = 'rgba(36,45,41,0.85)';
-    ctx.fillRect(x - 3, -h, 18 + hash(k) * 7, 4);
-    if (hash(k * 4.1 + 7.7) > 0.55) {
-      ctx.fillStyle = 'rgba(135,92,64,0.25)';
-      ctx.fillRect(x + 8, -h + 14 + hash(k) * 30, 2, 20 + hash(k * 2.2) * 40);
-    }
-  }
-
-  // rust staining down the columns
-  ctx.fillStyle = 'rgba(122,84,60,0.13)';
-  for (let k = k0; k <= k1; k++) {
-    if (hash(k * 6.72 + 9.1) < 0.55) continue;
-    const x = k * step + 10 + hash(k * 2.6) * 20;
-    ctx.fillRect(x, -72, 1 + hash(k) * 2, 54 + hash(k * 3.2) * 40);
-  }
-
-  // a heavy service pipe sagging across the whole arcade
-  ctx.lineCap = 'round';
-  ctx.strokeStyle = 'rgba(61,65,57,0.9)';
-  ctx.lineWidth = 12;
-  ctx.beginPath();
-  for (let x = left - 20; x <= right + 20; x += 20) {
-    const y = -35 + Math.sin(x * 0.012 + 1.4) * 5;
-    if (x === left - 20) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-  ctx.strokeStyle = 'rgba(122,101,79,0.34)';
-  ctx.lineWidth = 5;
-  ctx.beginPath();
-  for (let x = left - 20; x <= right + 20; x += 20) {
-    const y = -38 + Math.sin(x * 0.012 + 1.4) * 5;
-    if (x === left - 20) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-  ctx.strokeStyle = 'rgba(44,52,47,0.8)';
-  ctx.lineWidth = 1.4;
-  for (let x = left; x <= right; x += 31) {
-    const y = -35 + Math.sin(x * 0.012 + 1.4) * 5;
-    ctx.beginPath();
-    ctx.moveTo(x, y - 9);
-    ctx.lineTo(x, y + 9);
-    ctx.stroke();
-  }
-
-  // catwalk railing above the wall
-  ctx.strokeStyle = 'rgba(68,82,75,0.7)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let x = left; x <= right; x += 17) {
-    const y = -96 + Math.sin(x * 0.021) * 2;
-    ctx.moveTo(x, y);
-    ctx.lineTo(x, y - 10);
-  }
-  ctx.moveTo(left, -105);
-  ctx.lineTo(right, -103);
-  ctx.stroke();
-
-  // giant broken fan / valve set into the wall
-  for (let k = k0; k <= k1; k++) {
-    if (hash(k * 12.3 + 6.5) < 0.82) continue;
-    const x = k * step + 28;
-    const y = -62;
-    const rad = 25 + hash(k * 2.2) * 13;
-    ctx.strokeStyle = 'rgba(50,61,55,0.75)';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(x, y, rad, 0, TAU);
-    ctx.stroke();
-    ctx.strokeStyle = 'rgba(103,111,95,0.22)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(x, y, rad - 4, 0, TAU);
-    ctx.stroke();
-    for (let s = 0; s < 7; s++) {
-      const a = s / 7 * TAU;
-      ctx.beginPath();
-      ctx.moveTo(x + Math.cos(a) * 4, y + Math.sin(a) * 4);
-      ctx.lineTo(x + Math.cos(a) * (rad - 5), y + Math.sin(a) * (rad - 5));
-      ctx.stroke();
-    }
-    ctx.fillStyle = 'rgba(45,56,51,0.8)';
-    ctx.beginPath();
-    ctx.arc(x, y, 4, 0, TAU);
-    ctx.fill();
-  }
-
-  // long sagging cables
-  ctx.strokeStyle = 'rgba(32,45,42,0.7)';
-  ctx.lineWidth = 1.2;
-  for (let j = 0; j < 3; j++) {
-    const y = -76 - j * 23;
-    const x0 = left + 20 + j * 41;
-    const x1 = right - 30 - j * 57;
-    ctx.beginPath();
-    ctx.moveTo(x0, y);
-    ctx.bezierCurveTo(x0 + (x1 - x0) * 0.3, y + 20 + j * 5, x0 + (x1 - x0) * 0.7, y + 22 + j * 4, x1, y + 3);
-    ctx.stroke();
-  }
-
-  // hanging chains
-  for (let k = k0; k <= k1; k++) {
-    if (hash(k * 7.31 + 6.1) < 0.66) continue;
-    const x = k * step + 48;
-    const len = 24 + hash(k * 2.1) * 48;
-    const sway = Math.sin(worldTime.t * 0.7 + k) * 1.4;
-    ctx.strokeStyle = 'rgba(37,50,46,0.6)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(x, -70);
-    ctx.quadraticCurveTo(x + sway, -70 + len * 0.55, x + sway * 2, -70 + len);
-    ctx.stroke();
-  }
-
-  // pale vertical highlights to suggest wet stone
-  ctx.fillStyle = 'rgba(171,185,171,0.06)';
-  for (let k = k0; k <= k1; k++) {
-    if (hash(k * 9.2) > 0.55) continue;
-    const x = k * step + 12;
-    ctx.fillRect(x, -78, 1, 82);
-  }
-  ctx.restore();
-}
-
-function drawNearRuins() {
-  const f = 0.61;
-  const baseY = VH * 0.74 - (cam.y - 225) * 0.38;
-
-  ctx.save();
-  ctx.translate(VW / 2 - cam.x * f, baseY);
-  const left = cam.x * f - VW / 2 - 260;
-  const right = cam.x * f + VW / 2 + 260;
-
-  const step = 146;
-  const k0 = Math.floor(left / step) - 1;
-  const k1 = Math.ceil(right / step) + 1;
-
-  for (let k = k0; k <= k1; k++) {
-    const r = hash(k * 3.41 + 8.2);
-    if (r < 0.46) continue;
-    const x = k * step + hash(k * 1.2) * 55;
-    const h = 60 + hash(k * 2.7 + 1.1) * 100;
-    const w = 13 + hash(k * 4.9 + 2.2) * 28;
-
-    // broken pillar / wall stub
-    ctx.fillStyle = 'rgba(29,31,25,0.95)';
-    ctx.beginPath();
-    ctx.moveTo(x, 35);
-    ctx.lineTo(x + w * 0.06, -h);
-    ctx.lineTo(x + w * 0.37, -h - 8 - hash(k * 5.1) * 15);
-    ctx.lineTo(x + w * 0.56, -h + 3);
-    ctx.lineTo(x + w * 0.83, -h - 4);
-    ctx.lineTo(x + w, 35);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.fillStyle = 'rgba(146,155,130,0.16)';
-    ctx.fillRect(x + w * 0.65, -h, 1.5, h);
-    ctx.fillStyle = 'rgba(143,91,61,0.20)';
-    ctx.fillRect(x + 2, -h + 10, 1.2, h * 0.55);
-
-    // rusted rebar
-    ctx.strokeStyle = 'rgba(140,100,71,0.3)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(x + w * 0.3, -h);
-    ctx.lineTo(x + w * 0.24, -h - 13 - hash(k) * 8);
-    ctx.stroke();
-
-    // a tall pipe climbing one side
-    if (r > 0.78) {
-      ctx.strokeStyle = 'rgba(25,32,28,0.9)';
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.moveTo(x + w * 0.82, 12);
-      ctx.lineTo(x + w * 0.82, -h - 18);
-      ctx.stroke();
-      ctx.strokeStyle = 'rgba(133,96,68,0.3)';
-      ctx.lineWidth = 1.2;
-      ctx.beginPath();
-      ctx.moveTo(x + w * 0.82 - 1, 10);
-      ctx.lineTo(x + w * 0.82 - 1, -h - 16);
-      ctx.stroke();
-    }
-
-    // a dark arch cut through a broad stub
-    if (w > 26 && hash(k * 7.2 + 3.1) > 0.55) {
-      ctx.fillStyle = 'rgba(19,25,22,0.9)';
-      ctx.beginPath();
-      ctx.moveTo(x + w * 0.42, 22);
-      ctx.lineTo(x + w * 0.42, -h * 0.38);
-      ctx.quadraticCurveTo(x + w * 0.65, -h * 0.5, x + w * 0.85, -h * 0.38);
-      ctx.lineTo(x + w * 0.85, 22);
-      ctx.closePath();
-      ctx.fill();
-    }
-
-    // hanging chain from above
-    if (hash(k * 10.7 + 1.9) > 0.72) {
-      const cx = x + w * 0.3;
-      const len = 50 + hash(k * 3.1) * 80;
-      const sway = Math.sin(worldTime.t * 0.55 + k * 1.7) * 2;
-      ctx.strokeStyle = 'rgba(22,29,26,0.85)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(cx, -VH);
-      ctx.bezierCurveTo(cx + sway, -len * 0.4, cx - sway, -len * 0.7, cx + sway, -len);
-      ctx.stroke();
-      ctx.fillStyle = 'rgba(33,42,37,0.9)';
-      for (let j = 1; j < 7; j++) {
-        const t = j / 7;
-        ctx.beginPath();
-        ctx.ellipse(cx + Math.sin(t * 4 + k) * 2.2, -VH + (VH - len) * t, 1.2, 2.2, 0, 0, TAU);
-        ctx.fill();
-      }
-    }
-
-    // a fence segment now and then
-    if (hash(k * 6.2 + 5.5) > 0.72) {
-      ctx.strokeStyle = 'rgba(25,38,35,0.75)';
-      ctx.lineWidth = 0.8;
-      const fy = -20, fw = 34;
-      ctx.beginPath();
-      for (let i = 0; i < 4; i++) {
-        ctx.moveTo(x + fw + 6 + i * 5, fy);
-        ctx.lineTo(x + fw + 6 + i * 5, fy - 15);
-      }
-      ctx.moveTo(x + fw + 6, fy - 12);
-      ctx.lineTo(x + fw + 24, fy - 12);
-      ctx.stroke();
-    }
-
-    // vines hanging from the pillar
-    if (hash(k * 7.7 + 2.4) > 0.5) {
-      const vx = x + w * 0.2;
-      const len = 20 + hash(k * 3.3) * 46;
-      ctx.strokeStyle = 'rgba(40,58,46,0.7)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(vx, -h * 0.65);
-      ctx.bezierCurveTo(vx + 4, -h * 0.45, vx - 4, -h * 0.3, vx + 1, -h * 0.65 + len);
-      ctx.stroke();
-      ctx.fillStyle = 'rgba(51,70,53,0.65)';
-      for (let i = 1; i <= 3; i++) {
-        const t = i / 4;
-        const yy = -h * 0.65 + len * t;
-        ctx.beginPath();
-        ctx.ellipse(vx + (i % 2 ? 2 : -2), yy, 2.5, 1.2, i % 2 ? 0.5 : -0.5, 0, TAU);
-        ctx.fill();
-      }
-    }
-  }
-  ctx.restore();
-}
-
-function drawViaduct() {
-  const f = 0.46;
-  const baseY = VH * 0.69 - (cam.y - 225) * 0.28;
-
-  ctx.save();
-  ctx.translate(VW / 2 - cam.x * f, baseY);
-  const left = cam.x * f - VW / 2 - 190;
-  const right = cam.x * f + VW / 2 + 190;
-  const step = 156;
-  const k0 = Math.floor(left / step) - 1;
-  const k1 = Math.ceil(right / step) + 1;
-
-  // the long broken wall
-  ctx.beginPath();
-  ctx.moveTo(left - 40, 40);
-  for (let x = left - 40; x <= right + 40; x += 16) {
-    const base = 102 + Math.sin(x * 0.008 + 1.7) * 5;
-    const broken = hash(Math.floor(x / 27) * 1.7 + 3.1) > 0.83
-      ? 10 + hash(x * 0.7) * 16
-      : 0;
-    ctx.lineTo(x, -(base - broken));
-  }
-  ctx.lineTo(right + 40, 40);
-  ctx.closePath();
-  const wallGrad = ctx.createLinearGradient(0, -130, 0, 30);
-  wallGrad.addColorStop(0, 'rgba(78,76,60,0.95)');
-  wallGrad.addColorStop(1, 'rgba(45,48,38,0.97)');
-  ctx.fillStyle = wallGrad;
-  ctx.fill();
-
-  // columns and cornice
-  ctx.fillStyle = 'rgba(87,84,66,0.9)';
-  for (let k = k0; k <= k1; k++) {
-    const x = k * step;
-    ctx.fillRect(x, -112, 20, 150);
-    ctx.fillStyle = 'rgba(125,120,94,0.13)';
-    ctx.fillRect(x + 1, -112, 2.5, 150);
-    ctx.fillStyle = 'rgba(87,84,66,0.9)';
-  }
-  ctx.fillStyle = 'rgba(61,60,48,0.95)';
-  ctx.fillRect(left - 60, -106, right - left + 120, 5);
-  ctx.fillStyle = 'rgba(120,113,88,0.14)';
-  ctx.fillRect(left - 60, -106, right - left + 120, 1.2);
-
-  // arched openings
-  for (let k = k0; k <= k1; k++) {
-    const x = k * step;
-    const aw = 88;
-    const ah = 66 + hash(k * 2.3) * 24;
-    const y0 = 16;
-    ctx.fillStyle = 'rgba(22,28,24,0.9)';
-    ctx.beginPath();
-    ctx.moveTo(x + 34, y0);
-    ctx.lineTo(x + 34, y0 - ah + 20);
-    ctx.quadraticCurveTo(x + 34 + aw / 2, y0 - ah - 9, x + 34 + aw, y0 - ah + 20);
-    ctx.lineTo(x + 34 + aw, y0);
-    ctx.closePath();
-    ctx.fill();
-
-    if (hash(k * 7.7 + 2.1) > 0.68) {
-      const lit = ctx.createLinearGradient(0, y0 - ah, 0, y0);
-      lit.addColorStop(0, 'rgba(216,166,104,0.18)');
-      lit.addColorStop(1, 'rgba(216,166,104,0)');
-      ctx.fillStyle = lit;
-      ctx.beginPath();
-      ctx.moveTo(x + 38, y0);
-      ctx.lineTo(x + 38, y0 - ah + 20);
-      ctx.quadraticCurveTo(x + 34 + aw / 2, y0 - ah - 7, x + 34 + aw - 4, y0 - ah + 20);
-      ctx.lineTo(x + 34 + aw - 4, y0);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = 'rgba(247,199,128,0.5)';
-      ctx.fillRect(x + 34 + aw / 2 - 1, y0 - ah + 22, 2, 2);
-    }
-
-    // hanging vines inside the arch
-    if (hash(k * 8.9 + 6.3) > 0.55) {
-      const vx = x + 46 + hash(k * 3.1) * 46;
-      const vl = 12 + hash(k * 4.7) * 36;
-      ctx.strokeStyle = 'rgba(39,57,42,0.7)';
-      ctx.lineWidth = 0.9;
-      ctx.beginPath();
-      ctx.moveTo(vx, y0 - ah + 20);
-      ctx.quadraticCurveTo(vx + 3, y0 - ah + 20 + vl * 0.5, vx - 1, y0 - ah + 20 + vl);
-      ctx.stroke();
-      ctx.fillStyle = 'rgba(48,67,47,0.7)';
-      ctx.beginPath();
-      ctx.ellipse(vx - 1, y0 - ah + 20 + vl, 1.7, 0.9, 0.4, 0, TAU);
-      ctx.fill();
-    }
-  }
-
-  // weeds along the top
-  ctx.strokeStyle = 'rgba(51,69,46,0.7)';
-  ctx.lineWidth = 0.8;
-  for (let x = left; x < right; x += 13) {
-    if (hash(x * 0.61 + 4.4) < 0.4) continue;
-    const y = -96 - hash(x * 0.3) * 20;
-    const gh = 3 + hash(x * 1.7) * 8;
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.quadraticCurveTo(x + 1, y - gh * 0.5, x + 2.5 + Math.sin(worldTime.t + x) * 1.2, y - gh);
-    ctx.stroke();
-  }
-
-  ctx.restore();
-}
-
-function drawOverhang() {
-  const f = 0.84;
-  ctx.save();
-  ctx.translate(VW / 2 - cam.x * f, -(cam.y - 225) * 0.35);
-
-  const left = cam.x * f - VW / 2 - 160;
-  const right = cam.x * f + VW / 2 + 160;
-  const step = 380;
-  const k0 = Math.floor(left / step) - 1;
-  const k1 = Math.ceil(right / step) + 1;
-
-  // hanging cables and chains, thin against the sky
-  ctx.lineCap = 'round';
-  for (let k = k0; k <= k1; k++) {
-    if (hash(k * 4.7 + 1.3) < 0.3) continue;
-    const x = k * step + hash(k * 2.2) * 160;
-    const len = 30 + hash(k * 5.5) * 110;
-    const sway = Math.sin(worldTime.t * 0.5 + k * 1.4) * 3;
-    ctx.strokeStyle = 'rgba(16,24,20,0.9)';
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.moveTo(x, -30);
-    ctx.bezierCurveTo(x + sway * 0.5, len * 0.25, x - sway, len * 0.65, x + sway, len);
-    ctx.stroke();
-
-    if (hash(k * 8.1 + 2.7) > 0.58) {
-      // a little hanging lamp
-      const ly = len + 4;
-      ctx.strokeStyle = 'rgba(17,25,21,0.9)';
-      ctx.beginPath();
-      ctx.moveTo(x + sway, ly - 4);
-      ctx.lineTo(x + sway, ly);
-      ctx.stroke();
-      ctx.fillStyle = 'rgba(70,67,48,0.9)';
-      ctx.beginPath();
-      ctx.ellipse(x + sway, ly + 1, 3.2, 2, 0, 0, TAU);
-      ctx.fill();
-      ctx.save();
-      ctx.globalCompositeOperation = 'screen';
-      const halo = ctx.createRadialGradient(x + sway, ly + 1, 0.5, x + sway, ly + 1, 22);
-      halo.addColorStop(0, 'rgba(240,189,112,0.18)');
-      halo.addColorStop(1, 'rgba(240,189,112,0)');
-      ctx.fillStyle = halo;
-      ctx.fillRect(x + sway - 24, ly - 23, 48, 48);
-      ctx.restore();
-      ctx.fillStyle = 'rgba(255,209,139,0.55)';
-      ctx.fillRect(x + sway - 0.8, ly + 0.4, 1.6, 1.2);
-    }
-  }
-
-  // huge broken slab intruding from the upper-left
-  ctx.fillStyle = 'rgba(14,22,18,0.96)';
-  ctx.beginPath();
-  ctx.moveTo(left - 40, -80);
-  ctx.lineTo(left + 210, -80);
-  ctx.lineTo(left + 190, 16);
-  ctx.lineTo(left + 150, 34);
-  ctx.lineTo(left + 112, 24);
-  ctx.lineTo(left + 80, 58);
-  ctx.lineTo(left + 40, 28);
-  ctx.lineTo(left - 40, 58);
-  ctx.closePath();
-  ctx.fill();
-  ctx.fillStyle = 'rgba(105,87,62,0.16)';
-  ctx.beginPath();
-  ctx.moveTo(left + 40, 28);
-  ctx.lineTo(left + 80, 58);
-  ctx.lineTo(left + 84, 38);
-  ctx.closePath();
-  ctx.fill();
-  // rebar dangling from the slab
-  ctx.strokeStyle = 'rgba(117,85,59,0.42)';
-  ctx.lineWidth = 0.9;
-  for (let i = 0; i < 5; i++) {
-    const x = left + 50 + i * 30;
-    const len = 9 + hash(i * 3.7) * 21;
-    ctx.beginPath();
-    ctx.moveTo(x, 28 + hash(i) * 12);
-    ctx.quadraticCurveTo(x + 3, 28 + len * 0.6, x - 2 + hash(i) * 4, 28 + len);
-    ctx.stroke();
-  }
-
-  // a massive pipe elbow hanging in from the upper-right
-  ctx.fillStyle = 'rgba(15,23,19,0.97)';
-  ctx.beginPath();
-  ctx.moveTo(right + 30, -90);
-  ctx.lineTo(right - 250, -90);
-  ctx.lineTo(right - 240, -18);
-  ctx.lineTo(right - 190, 12);
-  ctx.lineTo(right - 155, 44);
-  ctx.lineTo(right - 100, 40);
-  ctx.lineTo(right - 70, 68);
-  ctx.lineTo(right - 20, 74);
-  ctx.lineTo(right + 30, 40);
-  ctx.closePath();
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(137,105,76,0.2)';
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(right - 240, -18);
-  ctx.quadraticCurveTo(right - 180, -8, right - 160, 38);
-  ctx.stroke();
-  ctx.strokeStyle = 'rgba(18,27,22,0.95)';
-  ctx.lineWidth = 10;
-  ctx.beginPath();
-  ctx.moveTo(right - 230, -22);
-  ctx.quadraticCurveTo(right - 170, -12, right - 152, 36);
-  ctx.stroke();
-
-  // a few big foreground leaves hanging from the dark masses
-  for (let i = 0; i < 5; i++) {
-    const x = left + 90 + i * 35;
-    const y = 26 + hash(i * 6.3) * 24;
-    const len = 16 + hash(i * 2.9) * 22;
-    const sway = Math.sin(worldTime.t * 0.7 + i) * 2;
-    ctx.strokeStyle = 'rgba(11,19,14,0.95)';
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.quadraticCurveTo(x + 2, y + len * 0.6, x + sway, y + len);
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(12,22,15,0.95)';
-    for (let j = 1; j <= 3; j++) {
-      const t = j / 4;
-      ctx.beginPath();
-      ctx.ellipse(x + sway * t + (j % 2 ? 3 : -3), y + len * t, 3.8, 1.3, j % 2 ? 0.5 : -0.5, 0, TAU);
-      ctx.fill();
-    }
-  }
-
-  ctx.restore();
-}
-
-function drawForegroundVines() {
-  // dark hanging curtains, only near the upper corners
-  const f = 1.12;
-  ctx.save();
-  ctx.translate(VW / 2 - cam.x * f, -cam.y * f * 0.1 + VH * 0.06);
-  const left = cam.x * f - VW / 2 - 200;
-  const right = cam.x * f + VW / 2 + 200;
-  const step = 330;
-  const k0 = Math.floor(left / step) - 1;
-  const k1 = Math.ceil(right / step) + 1;
-  for (let k = k0; k <= k1; k++) {
-    if (hash(k * 4.11 + 2.3) < 0.42) continue;
-    const x = k * step + hash(k * 2.7) * 190;
-    const len = 35 + hash(k * 5.9) * 95;
-    const sway = Math.sin(worldTime.t * 0.6 + k * 2.1) * 3;
-    ctx.strokeStyle = 'rgba(14,22,19,0.8)';
-    ctx.lineWidth = 1.6;
-    ctx.beginPath();
-    ctx.moveTo(x, -20);
-    ctx.bezierCurveTo(x - 6, len * 0.25, x + 10 + sway, len * 0.6, x + sway, len);
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(16,26,21,0.8)';
-    for (let i = 1; i < 5; i++) {
-      const t = i / 5;
-      const yy = len * t;
-      const xx = x + Math.sin(t * 4 + k) * 5 + sway * t;
-      ctx.beginPath();
-      ctx.ellipse(xx + (i % 2 ? 3 : -3), yy, 4.5, 1.7, i % 2 ? 0.6 : -0.6, 0, TAU);
-      ctx.fill();
-    }
-  }
-  ctx.restore();
-}
-
-// ------------------------------------------------------------- terrain art
-
-function drawMushroom(x, s) {
-  const y = groundY(x);
-  const h = (7 + hash(x * 0.37) * 8) * s;
-  const glow = ctx.createRadialGradient(x, y - h, 1, x, y - h, 30 * s);
-  glow.addColorStop(0, 'rgba(255,192,116,0.12)');
-  glow.addColorStop(0.45, 'rgba(244,160,92,0.05)');
-  glow.addColorStop(1, 'rgba(244,160,92,0)');
-  ctx.fillStyle = glow;
-  ctx.fillRect(x - 32 * s, y - h - 32 * s, 64 * s, 64 * s);
-
-  ctx.strokeStyle = 'rgba(60,65,52,0.9)';
-  ctx.lineWidth = 1.2 * s;
-  ctx.beginPath();
-  ctx.moveTo(x, y);
-  ctx.quadraticCurveTo(x - 1, y - h * 0.55, x + 1, y - h);
-  ctx.stroke();
-
-  ctx.fillStyle = 'rgba(83,82,60,0.9)';
-  ctx.beginPath();
-  ctx.ellipse(x + 1, y - h, 3.7 * s, 1.9 * s, -0.1, 0, TAU);
-  ctx.fill();
-  ctx.fillStyle = 'rgba(137,128,91,0.8)';
-  ctx.beginPath();
-  ctx.ellipse(x + 0.4, y - h - 0.5, 2.9 * s, 1.0 * s, -0.1, 0, TAU);
-  ctx.fill();
-
-  ctx.fillStyle = 'rgba(186,173,131,0.55)';
-  ctx.beginPath();
-  ctx.arc(x + 2, y - h - 1.2, 0.75 * s, 0, TAU);
-  ctx.fill();
-}
-
-function drawGrassTuft(x, size, alpha) {
-  const y = groundY(x);
-  const sway = Math.sin(worldTime.t * 1.25 + x * 0.045) * 1.3 + Math.sin(worldTime.t * 0.31) * 0.8;
-  const blades = 3 + Math.floor(hash(x * 0.73) * 4);
-  for (let i = 0; i < blades; i++) {
-    const bx = x + (hash(x * 1.91 + i * 3.7) - 0.5) * 10;
-    const h = (5 + hash(x * 2.7 + i * 8.1) * 10) * size;
-    const lean = (hash(x * 4.3 + i) - 0.5) * 6;
-    ctx.strokeStyle = i % 3 === 0 ? `rgba(144,151,104,${alpha * 0.7})` : `rgba(73,87,56,${alpha})`;
-    ctx.lineWidth = 0.8 + hash(x + i) * 0.7;
-    ctx.beginPath();
-    ctx.moveTo(bx, y + 1);
-    ctx.quadraticCurveTo(bx + lean * 0.25, y - h * 0.5, bx + lean + sway, y - h);
-    ctx.stroke();
-  }
-}
-
-function drawGround(x0, x1) {
-  const bottom = VH + 100;
-
-  // body of the earth
-  const earth = ctx.createLinearGradient(0, TERRAIN_BASE - 20, 0, VH + 30);
-  earth.addColorStop(0, '#2f3127');
-  earth.addColorStop(0.18, '#20231b');
-  earth.addColorStop(1, '#0b0f0b');
-  ctx.fillStyle = earth;
-  ctx.beginPath();
-  ctx.moveTo(x0, bottom);
-  for (let x = x0; x <= x1; x += 2) ctx.lineTo(x, groundY(x));
-  ctx.lineTo(x1, bottom);
-  ctx.closePath();
-  ctx.fill();
-
-  // wet stone band just below the surface
-  ctx.lineJoin = 'round';
-  ctx.strokeStyle = 'rgba(55,58,43,0.95)';
-  ctx.lineWidth = 9;
-  ctx.beginPath();
-  for (let x = x0; x <= x1; x += 3) {
-    const y = groundY(x) + 5;
-    if (x === x0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-
-  // strata
-  for (const [depth, alpha, color] of [[18, 0.19, '#3b3c2c'], [35, 0.12, '#33352a'], [60, 0.09, '#2c3025']]) {
-    ctx.strokeStyle = color;
-    ctx.globalAlpha = alpha;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    for (let x = x0; x <= x1; x += 4) {
-      const y = groundY(x) + depth + Math.sin(x * 0.031 + depth) * 2.5;
-      if (x === x0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-  }
-  ctx.globalAlpha = 1;
-
-  // cracks
-  for (let k = Math.floor(x0 / 80) - 1; k <= Math.ceil(x1 / 80) + 1; k++) {
-    if (hash(k * 3.61 + 1.1) < 0.62) continue;
-    const x = k * 80 + hash(k * 1.7) * 60;
-    const y = groundY(x);
-    ctx.strokeStyle = 'rgba(8,14,12,0.42)';
-    ctx.lineWidth = 0.8;
-    ctx.beginPath();
-    ctx.moveTo(x, y + 4);
-    ctx.lineTo(x + (hash(k) - 0.5) * 6, y + 12 + hash(k * 2.2) * 18);
-    ctx.stroke();
-  }
-
-  // mossy cap
-  ctx.strokeStyle = 'rgba(94,105,72,0.95)';
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  for (let x = x0; x <= x1; x += 3) {
-    const y = groundY(x);
-    if (x === x0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-  ctx.strokeStyle = 'rgba(158,168,122,0.42)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let x = x0; x <= x1; x += 3) {
-    const y = groundY(x) - 0.8;
-    if (x === x0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-
-  // puddles
-  for (let k = Math.floor(x0 / 250) - 1; k <= Math.ceil(x1 / 250) + 1; k++) {
-    if (hash(k * 4.27 + 3.1) < 0.45) continue;
-    const x = k * 250 + hash(k * 2.2) * 140;
-    if (Math.abs(groundSlope(x)) > 0.10) continue;
-    const w = 14 + hash(k * 5.1) * 26;
-    const y = groundY(x) + 1.2;
-    ctx.fillStyle = 'rgba(28,38,36,0.55)';
-    ctx.beginPath();
-    ctx.ellipse(x, y, w, 2.1 + w * 0.04, 0, 0, TAU);
-    ctx.fill();
-    ctx.fillStyle = 'rgba(188,199,181,0.18)';
-    ctx.fillRect(x - w * 0.55, y - 0.8, w * 0.62, 0.8);
-    ctx.fillStyle = 'rgba(236,218,183,0.10)';
-    ctx.fillRect(x + w * 0.1, y - 1.2, w * 0.25, 0.55);
-    ctx.strokeStyle = 'rgba(115,133,119,0.2)';
-    ctx.lineWidth = 0.6;
-    ctx.beginPath();
-    ctx.ellipse(x, y, w, 2.1 + w * 0.04, 0, 0, TAU);
-    ctx.stroke();
-  }
-
-  // wet glints in flat places
-  for (let k = Math.floor(x0 / 130) - 1; k <= Math.ceil(x1 / 130) + 1; k++) {
-    if (hash(k * 2.63 + 8.1) < 0.55) continue;
-    const x = k * 130 + hash(k * 3.3) * 90;
-    if (Math.abs(groundSlope(x)) > 0.12) continue;
-    const w = 6 + hash(k * 5.1) * 13;
-    ctx.fillStyle = 'rgba(170,184,156,0.14)';
-    ctx.fillRect(x - w * 0.5, groundY(x) + 0.9, w * 0.55, 0.7);
-  }
-
-  // little pale flowers and rusted scrap
-  for (let k = Math.floor(x0 / 95) - 1; k <= Math.ceil(x1 / 95) + 1; k++) {
-    const r = hash(k * 7.13 + 2.4);
-    if (r < 0.56) continue;
-    const x = k * 95 + hash(k * 2.7) * 60;
-    const y = groundY(x);
-    if (r > 0.87) {
-      // scrap plate
-      ctx.fillStyle = 'rgba(78,65,50,0.55)';
-      ctx.beginPath();
-      ctx.moveTo(x, y + 1);
-      ctx.lineTo(x + 8 + hash(k) * 6, y - 1);
-      ctx.lineTo(x + 12 + hash(k * 2.2) * 6, y + 1.6);
-      ctx.lineTo(x + 2, y + 2.4);
-      ctx.closePath();
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(142,100,68,0.3)';
-      ctx.lineWidth = 0.6;
-      ctx.stroke();
-    } else if (r < 0.72) {
-      // flower
-      const h = 4 + hash(k * 1.9) * 6;
-      ctx.strokeStyle = 'rgba(97,116,78,0.65)';
-      ctx.lineWidth = 0.55;
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.quadraticCurveTo(x - 1, y - h * 0.5, x + 0.5, y - h);
-      ctx.stroke();
-      ctx.fillStyle = 'rgba(224,220,190,0.55)';
-      ctx.beginPath();
-      ctx.arc(x + 0.5, y - h, 0.9, 0, TAU);
-      ctx.fill();
-    }
-  }
-
-  // buried boulders and rubble in the cross-section
-  for (let k = Math.floor(x0 / 82) - 1; k <= Math.ceil(x1 / 82) + 1; k++) {
-    const r = hash(k * 5.17 + 6.2);
-    if (r < 0.48) continue;
-    const x = k * 82 + hash(k * 2.4) * 60;
-    const depth = 12 + hash(k * 3.3) * 65;
-    const y = groundY(x) + depth;
-    const rx = 3 + hash(k * 4.1) * 9;
-    const ry = rx * (0.5 + hash(k * 6.2) * 0.4);
-    ctx.fillStyle = `rgba(55,57,44,${0.45 + r * 0.25})`;
-    ctx.beginPath();
-    ctx.ellipse(x, y, rx, ry, hash(k) * 1.2, 0, TAU);
-    ctx.fill();
-    ctx.fillStyle = 'rgba(128,129,96,0.12)';
-    ctx.beginPath();
-    ctx.ellipse(x - rx * 0.15, y - ry * 0.35, rx * 0.7, ry * 0.35, hash(k) * 1.2, 0, TAU);
-    ctx.fill();
-  }
-
-  // old pipes embedded in the bank
-  for (let k = Math.floor(x0 / 330) - 1; k <= Math.ceil(x1 / 330) + 1; k++) {
-    if (hash(k * 7.37 + 5.1) < 0.5) continue;
-    const x = k * 330 + 30 + hash(k * 2.4) * 220;
-    const y = groundY(x) + 18 + hash(k * 3.6) * 28;
-    const w = 24 + hash(k * 4.4) * 40;
-    ctx.strokeStyle = 'rgba(39,41,33,0.8)';
-    ctx.lineWidth = 5;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.lineTo(x + w, y + Math.sin(k) * 2);
-    ctx.stroke();
-    ctx.strokeStyle = 'rgba(117,92,65,0.25)';
-    ctx.lineWidth = 1.4;
-    ctx.beginPath();
-    ctx.moveTo(x, y - 1.2);
-    ctx.lineTo(x + w, y - 1.2 + Math.sin(k) * 2);
-    ctx.stroke();
-  }
-
-  // weathered pipe openings / burrows in the bank
-  for (let k = Math.floor(x0 / 540) - 1; k <= Math.ceil(x1 / 540) + 1; k++) {
-    if (hash(k * 8.41 + 4.6) < 0.58) continue;
-    const x = k * 540 + 80 + hash(k * 2.8) * 300;
-    if (Math.abs(groundSlope(x)) > 0.2) continue;
-    const y = groundY(x) + 2;
-    ctx.fillStyle = 'rgba(11,16,13,0.9)';
-    ctx.beginPath();
-    ctx.ellipse(x, y + 6, 11 + hash(k * 3.3) * 8, 12 + hash(k * 4.2) * 9, 0.1, 0, TAU);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(108,92,64,0.35)';
-    ctx.lineWidth = 1.4;
-    ctx.beginPath();
-    ctx.ellipse(x, y + 6, 11 + hash(k * 3.3) * 8, 12 + hash(k * 4.2) * 9, 0.1, Math.PI, TAU);
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(26,33,27,0.6)';
-    ctx.fillRect(x - 15, y + 1, 30, 2);
-  }
-
-  // rocks and roots
-  for (let k = Math.floor(x0 / 54) - 1; k <= Math.ceil(x1 / 54) + 1; k++) {
-    const r = hash(k * 4.93 + 2.2);
-    if (r < 0.52) continue;
-    const x = k * 54 + hash(k * 1.3) * 30;
-    const y = groundY(x);
-    if (r > 0.84) {
-      // root / dead branch
-      ctx.strokeStyle = 'rgba(39,45,34,0.85)';
-      ctx.lineWidth = 1.2;
-      ctx.beginPath();
-      ctx.moveTo(x, y + 1);
-      ctx.bezierCurveTo(x + 5, y - 2, x + 8, y - 4, x + 12, y - 7);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(x + 5, y - 2);
-      ctx.lineTo(x + 3, y - 7);
-      ctx.stroke();
-    } else {
-      const w = 2.5 + hash(k * 2.1) * 5;
-      ctx.fillStyle = 'rgba(40,51,45,0.9)';
-      ctx.beginPath();
-      ctx.ellipse(x, y + 1, w, w * 0.45, 0, 0, TAU);
-      ctx.fill();
-      ctx.fillStyle = 'rgba(126,142,120,0.18)';
-      ctx.beginPath();
-      ctx.ellipse(x - w * 0.2, y - 0.2, w * 0.55, w * 0.18, 0, 0, TAU);
-      ctx.fill();
-    }
-  }
-
-  // grass
-  for (let x = Math.floor(x0 / 9) * 9; x <= x1; x += 9) {
-    const r = hash(x * 0.63 + 4.2);
-    if (r < 0.28) continue;
-    drawGrassTuft(x + r * 5, 0.7 + hash(x * 2.3) * 1.05, 0.52 + r * 0.32);
-  }
-  for (let k = Math.floor(x0 / 190) - 1; k <= Math.ceil(x1 / 190) + 1; k++) {
-    if (hash(k * 6.13 + 3.4) < 0.62) continue;
-    const x = k * 190 + hash(k * 2.1) * 120;
-    drawGrassTuft(x, 1.55 + hash(k * 3.7) * 0.7, 0.6);
-  }
-
-  // lantern fungus
-  for (let k = Math.floor(x0 / 430) - 1; k <= Math.ceil(x1 / 430) + 1; k++) {
-    if (hash(k * 7.73 + 1.7) < 0.34) continue;
-    const x = k * 430 + 60 + hash(k * 2.9) * 300;
-    if (x < x0 - 10 || x > x1 + 10) continue;
-    drawMushroom(x, 0.8 + hash(k * 4.2) * 0.65);
-  }
-}
-
-function drawPlatform(p, nearPlayer) {
-  const topCol = p.style === 'girder' ? '#3b3f33' : '#45463a';
-  const edgeCol = p.style === 'girder' ? 'rgba(166,166,119,0.55)' : 'rgba(150,151,116,0.4)';
-
-  // hanging chains / support cables, above the deck
-  ctx.strokeStyle = 'rgba(29,35,29,0.6)';
-  ctx.lineWidth = 1;
-  for (const ox of [p.x + 6, p.x + p.w - 6]) {
-    const sag = Math.sin(worldTime.t * 0.8 + p.seed * 7 + ox) * 1.2;
-    ctx.beginPath();
-    ctx.moveTo(ox, p.y - 2);
-    ctx.quadraticCurveTo(ox + sag, p.y - 80, ox + sag * 1.7, p.y - 170);
-    ctx.stroke();
-  }
-
-  // deck shadow
-  ctx.fillStyle = 'rgba(7,12,10,0.28)';
-  ctx.beginPath();
-  ctx.ellipse(p.x + p.w * 0.5, p.y + 12, p.w * 0.55, 3, 0, 0, TAU);
-  ctx.fill();
-
-  if (p.style === 'girder') {
-    ctx.fillStyle = topCol;
-    ctx.fillRect(p.x, p.y, p.w, 6);
-    ctx.fillStyle = '#283630';
-    ctx.fillRect(p.x, p.y + 6, p.w, 4);
-    // cross braces
-    ctx.strokeStyle = 'rgba(33,46,40,0.95)';
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    for (let x = p.x + 4; x < p.x + p.w - 4; x += 14) {
-      ctx.moveTo(x, p.y + 6);
-      ctx.lineTo(x + 7, p.y + 13);
-      ctx.moveTo(x + 7, p.y + 6);
-      ctx.lineTo(x, p.y + 13);
-    }
-    ctx.stroke();
-    // rust
-    ctx.fillStyle = 'rgba(138,95,64,0.24)';
-    for (let i = 0; i < 3; i++) {
-      const rx = p.x + 8 + hash(p.seed + i * 4.1) * (p.w - 16);
-      ctx.fillRect(rx, p.y + 1 + hash(p.seed + i) * 5, 2 + hash(p.seed + i * 3) * 5, 1);
-    }
-    // rivets
-    ctx.fillStyle = 'rgba(166,177,153,0.2)';
-    for (let x = p.x + 8; x < p.x + p.w; x += 12) ctx.fillRect(x, p.y + 2, 1, 1);
-  } else {
-    ctx.fillStyle = topCol;
-    ctx.beginPath();
-    ctx.moveTo(p.x, p.y + 1);
-    ctx.lineTo(p.x + p.w * 0.14, p.y - 1.5);
-    ctx.lineTo(p.x + p.w * 0.42, p.y);
-    ctx.lineTo(p.x + p.w * 0.67, p.y - 2);
-    ctx.lineTo(p.x + p.w, p.y);
-    ctx.lineTo(p.x + p.w - 2, p.y + 7);
-    ctx.lineTo(p.x + p.w * 0.74, p.y + 11);
-    ctx.lineTo(p.x + p.w * 0.32, p.y + 8);
-    ctx.lineTo(p.x, p.y + 7);
-    ctx.closePath();
-    ctx.fill();
-    // rebar
-    ctx.strokeStyle = 'rgba(112,82,58,0.55)';
-    ctx.lineWidth = 0.9;
-    for (let i = 0; i < 3; i++) {
-      const rx = p.x + 9 + i * (p.w - 18) / 3;
-      ctx.beginPath();
-      ctx.moveTo(rx, p.y + 8);
-      ctx.quadraticCurveTo(rx - 2, p.y + 13, rx + 1, p.y + 15 + hash(i + p.seed) * 4);
-      ctx.stroke();
-    }
-  }
-
-  // mossy top edge
-  ctx.strokeStyle = edgeCol;
-  ctx.lineWidth = nearPlayer ? 1.7 : 1.2;
-  ctx.beginPath();
-  ctx.moveTo(p.x, p.y);
-  ctx.lineTo(p.x + p.w, p.y);
-  ctx.stroke();
-
-  // grass tufts along the edge
-  for (let i = 0; i < 4; i++) {
-    if (hash(p.seed + i * 3.7) < 0.5) continue;
-    const gx = p.x + 6 + hash(p.seed + i * 1.9) * (p.w - 12);
-    const gh = 3 + hash(p.seed + i) * 5;
-    ctx.strokeStyle = 'rgba(66,86,66,0.85)';
-    ctx.lineWidth = 0.7;
-    ctx.beginPath();
-    ctx.moveTo(gx, p.y);
-    ctx.quadraticCurveTo(gx + 1, p.y - gh * 0.5, gx + 2 + Math.sin(worldTime.t + gx) * 1.5, p.y - gh);
-    ctx.stroke();
-  }
-
-  // vines
-  if (hash(p.seed * 4.4 + 1.2) > 0.35) {
-    const vx = hash(p.seed * 2.6) > 0.5 ? p.x + 3 : p.x + p.w - 3;
-    const len = 8 + hash(p.seed * 8.1) * 18;
-    ctx.strokeStyle = 'rgba(42,64,46,0.8)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(vx, p.y + 3);
-    ctx.bezierCurveTo(vx + 3, p.y + len * 0.4, vx - 3, p.y + len * 0.7, vx + 1, p.y + len);
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(54,78,54,0.8)';
-    ctx.beginPath();
-    ctx.ellipse(vx + 1, p.y + len, 2, 1, 0.4, 0, TAU);
-    ctx.fill();
-  }
-}
-
-// ======================================================================
-//  weather, particles, small life
-// ======================================================================
-
-const particles = [];
-const ripples = [];
-const rain = [];
-const motes = [];
-const flies = [];
-let bolt = null;
-
-function spawnDust(x, y, n = 4, power = 1, wet = true) {
-  for (let i = 0; i < n; i++) {
-    particles.push({
-      kind: 'dust',
-      x: x + rand(-4, 4),
-      y: y - rand(0, 2),
-      vx: rand(-28, 28) * power + Math.sin(worldTime.t * 0.7) * 6,
-      vy: -rand(6, 34) * power,
-      life: rand(0.25, 0.6) * (0.7 + power * 0.3),
-      max: 0.65,
-      r: rand(0.9, 2.4) * (0.7 + power * 0.25),
-      wet,
-    });
-  }
-}
-
-function spawnSplash(x, y, n = 3, power = 1) {
-  for (let i = 0; i < n; i++) {
-    particles.push({
-      kind: 'drop',
-      x: x + rand(-5, 5),
-      y: y - 0.5,
-      vx: rand(-35, 35) * power,
-      vy: -rand(18, 68) * power,
-      life: rand(0.2, 0.4),
-      max: 0.4,
-      r: rand(0.5, 1.2),
-      wet: true,
-    });
-  }
-}
-
-function spawnRipple(x, y, strength = 1) {
-  if (ripples.length > 70) return;
-  ripples.push({ x, y, t: 0, life: 0.5 + Math.random() * 0.25, s: 0.6 + strength * 0.7 });
-}
-
-function resetAmbient() {
-  rain.length = 0;
-  motes.length = 0;
-  flies.length = 0;
-  particles.length = 0;
-  ripples.length = 0;
-
-  const count = Math.floor(VW * 0.46);
-  for (let i = 0; i < count; i++) {
-    rain.push({
-      x: Math.random() * VW,
-      y: Math.random() * VH,
-      z: Math.random(),
-      vy: 110 + Math.random() * 150,
-      len: 3 + Math.random() * 8,
-      a: 0.06 + Math.random() * 0.16,
-    });
-  }
-
-  for (let i = 0; i < 26; i++) {
-    motes.push({
-      x: rand(-VW * 0.7, VW * 0.7),
-      y: rand(-VH * 0.4, VH * 0.25),
-      vx: rand(-2, 2),
-      vy: rand(-3, 2),
-      phase: Math.random() * TAU,
-      r: rand(0.4, 1.2),
-      a: rand(0.12, 0.4),
-    });
-  }
-
-  for (let i = 0; i < 7; i++) {
-    flies.push({
-      x: rand(-VW * 0.6, VW * 0.6),
-      y: rand(-VH * 0.3, -10),
-      vx: 0, vy: 0,
-      phase: Math.random() * TAU,
-      speed: rand(0.4, 1),
-      size: rand(0.7, 1.2),
-    });
-  }
-}
-
-function updateWeather(dt) {
-  worldTime.t += dt;
-  const wind = Math.sin(worldTime.t * 0.17) * 9 + Math.sin(worldTime.t * 0.043 + 1.7) * 16;
-  worldTime.wind = wind;
-
-  // lightning
-  worldTime.lightningIn -= dt;
-  if (worldTime.lightningIn <= 0) {
-    worldTime.lightningIn = 19 + Math.random() * 24;
-    cam.flash = 1;
-    bolt = makeBolt();
-    setTimeout(() => audio.thunder(), 500 + Math.random() * 1200);
-  }
-  cam.flash = Math.max(0, cam.flash - dt * 2.8);
-
-  // rain
-  for (const d of rain) {
-    d.y += d.vy * dt * (0.65 + d.z * 0.6);
-    d.x += (wind * 0.55 + 17) * dt * (0.4 + d.z);
-    if (d.y > VH + 12) {
-      d.y = -12 - Math.random() * 30;
-      d.x = Math.random() * (VW + 120) - 60;
-    }
-    if (d.x > VW + 30) d.x -= VW + 60;
-    if (d.x < -30) d.x += VW + 60;
-  }
-
-  // rain striking the ground
-  const camL = cam.x - VW / 2;
-  const camR = cam.x + VW / 2;
-  for (let i = 0; i < 2; i++) {
-    if (Math.random() < 0.75) {
-      const x = camL + Math.random() * (camR - camL);
-      const gy = groundY(x);
-      const sy = VH / 2 + (gy - cam.y);
-      if (sy > 12 && sy < VH + 10) {
-        spawnRipple(x, gy, 0.55 + Math.random() * 0.7);
-        if (Math.random() < 0.35) spawnSplash(x, gy, 1, 0.4);
-      }
-    }
-  }
-
-  // motes drift around the slugcat, world-space
-  for (const m of motes) {
-    m.phase += dt * 0.7;
-    m.x += (m.vx + Math.sin(m.phase) * 3 + wind * 0.02) * dt;
-    m.y += (m.vy + Math.cos(m.phase * 0.7) * 2) * dt;
-    if (m.y < -VH * 0.5) m.y = VH * 0.25;
-    if (m.x < -VW * 0.8) m.x = VW * 0.8;
-    if (m.x > VW * 0.8) m.x = -VW * 0.8;
-  }
-
-  // batflies
-  for (const f of flies) {
-    const wx = cam.x + f.x;
-    const wy = cam.y + f.y;
-    const dx = player.x - wx;
-    const dy = player.y - wy;
-    const d = Math.hypot(dx, dy);
-    if (d < 58) {
-      const k = (58 - d) / 58;
-      f.vx -= dx / (d || 1) * 160 * k * dt;
-      f.vy -= dy / (d || 1) * 160 * k * dt;
-    }
-    f.vx += (Math.sin(f.phase * 1.7) * 6 - f.vx) * dt * 1.6;
-    f.vy += (Math.cos(f.phase * 1.3) * 4 - f.vy) * dt * 1.6;
-    f.x += f.vx * dt;
-    f.y += f.vy * dt;
-    f.phase += dt * (1.2 + f.speed);
-
-    if (f.x < -VW * 0.7 || f.x > VW * 0.7 || f.y < -VH * 0.55 || f.y > -6) {
-      f.x = rand(-VW * 0.55, VW * 0.55);
-      f.y = rand(-VH * 0.42, -20);
-      f.vx = f.vy = 0;
-    }
-  }
-
-  // particles
-  for (let i = particles.length - 1; i >= 0; i--) {
-    const p = particles[i];
-    p.life -= dt;
-    if (p.life <= 0) { particles.splice(i, 1); continue; }
-    if (p.kind === 'drop') {
-      p.vy += 420 * dt;
-      p.vx *= 1 - 1.8 * dt;
-    } else {
-      p.vy += 18 * dt;
-      p.vx *= 1 - 1.3 * dt;
-      p.vy *= 1 - 0.7 * dt;
-    }
-    p.x += p.vx * dt;
-    p.y += p.vy * dt;
-  }
-
-  for (let i = ripples.length - 1; i >= 0; i--) {
-    const r = ripples[i];
-    r.t += dt;
-    if (r.t >= r.life) ripples.splice(i, 1);
-  }
-}
-
-function makeBolt() {
-  const pts = [];
-  let x = VW * (0.25 + Math.random() * 0.5);
-  let y = -10;
-  const endY = VH * 0.36;
-  while (y < endY) {
-    pts.push({ x, y });
-    x += rand(-16, 16);
-    y += rand(9, 22);
-  }
-  const branches = [];
-  for (let i = 1; i < pts.length - 1; i += 2) {
-    if (Math.random() < 0.65) {
-      const b = [pts[i]];
-      let bx = pts[i].x, by = pts[i].y;
-      for (let j = 0; j < 4; j++) {
-        bx += rand(-18, 12);
-        by += rand(5, 12);
-        b.push({ x: bx, y: by });
-      }
-      branches.push(b);
-    }
-  }
-  return { pts, branches };
-}
-
-function drawWeatherSky() {
-  if (!bolt || cam.flash <= 0.01) return;
-  ctx.save();
-  ctx.globalCompositeOperation = 'screen';
-  ctx.strokeStyle = `rgba(214,231,222,${cam.flash * 0.5})`;
-  ctx.lineWidth = 1.3;
-  ctx.beginPath();
-  for (let i = 0; i < bolt.pts.length; i++) {
-    const p = bolt.pts[i];
-    if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
-  }
-  ctx.stroke();
-  ctx.lineWidth = 0.8;
-  for (const b of bolt.branches) {
-    ctx.beginPath();
-    for (let i = 0; i < b.length; i++) {
-      if (i === 0) ctx.moveTo(b[i].x, b[i].y); else ctx.lineTo(b[i].x, b[i].y);
-    }
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-function drawRipples() {
-  for (const r of ripples) {
-    const k = r.t / r.life;
-    const e = 1 - (1 - k) * (1 - k);
-    const w = (1.5 + e * 9) * r.s;
-    ctx.strokeStyle = `rgba(156,180,166,${(1 - k) * 0.35})`;
-    ctx.lineWidth = 0.7;
-    ctx.beginPath();
-    ctx.ellipse(r.x, r.y + 0.4, w, Math.max(0.4, w * 0.2), groundSlope(r.x) * 0.5, 0, TAU);
-    ctx.stroke();
-  }
-}
-
-function drawMotes() {
-  ctx.save();
-  ctx.globalCompositeOperation = 'screen';
-  for (const m of motes) {
-    const x = cam.x + m.x;
-    const y = cam.y + m.y;
-    ctx.fillStyle = `rgba(190,220,191,${m.a * (0.5 + 0.5 * Math.sin(m.phase * 2))})`;
-    ctx.beginPath();
-    ctx.arc(x, y, m.r, 0, TAU);
-    ctx.fill();
-  }
-  ctx.restore();
-}
-
-function drawFlies() {
-  for (const f of flies) {
-    const x = cam.x + f.x;
-    const y = cam.y + f.y;
-    const flap = Math.sin(f.phase * 17);
-    ctx.save();
-    ctx.translate(x, y);
-    const tilt = clamp(f.vx * 0.01, -0.5, 0.5);
-    ctx.rotate(tilt);
-    ctx.fillStyle = 'rgba(18,26,24,0.85)';
-    ctx.beginPath();
-    ctx.ellipse(0, 0, 1.3 * f.size, 0.8 * f.size, 0, 0, TAU);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(171,184,170,0.28)';
-    ctx.lineWidth = 0.5;
-    ctx.beginPath();
-    ctx.ellipse(-0.2, -0.8, 1.5 * f.size, 0.5 + flap * 0.3, -0.5, 0, TAU);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.ellipse(0.2, -0.8, 1.5 * f.size, 0.5 - flap * 0.3, 0.5, 0, TAU);
-    ctx.stroke();
-    ctx.restore();
-  }
-}
-
-function drawParticles(front) {
-  for (const p of particles) {
-    if ((p.kind === 'drop') !== front) continue;
-    const k = clamp(p.life / p.max, 0, 1);
-    if (p.kind === 'drop') {
-      ctx.fillStyle = `rgba(169,194,181,${k * 0.6})`;
-      ctx.fillRect(p.x, p.y, p.r, p.r * 1.4);
-    } else {
-      ctx.fillStyle = p.wet
-        ? `rgba(97,111,103,${k * 0.24})`
-        : `rgba(116,111,92,${k * 0.2})`;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.r * (0.7 + (1 - k) * 0.8), 0, TAU);
-      ctx.fill();
-    }
-  }
-}
-
-function drawRain(front) {
-  const wind = (worldTime.wind || 0) * 0.55 + 17;
-  ctx.save();
-  for (const d of rain) {
-    if ((d.z > 0.55) !== front) continue;
-    const scale = 0.7 + d.z * 0.6;
-    const len = d.len * scale;
-    ctx.strokeStyle = `rgba(184,203,194,${d.a * (front ? 1 : 0.7)})`;
-    ctx.lineWidth = d.z > 0.8 ? 1.05 : 0.65;
-    ctx.beginPath();
-    ctx.moveTo(d.x, d.y);
-    ctx.lineTo(d.x - wind * len * 0.045, d.y - len * 2.6);
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-function drawForegroundLedge() {
-  const offset = -cam.x * 1.18;
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(-20, VH + 20);
-  for (let x = -20; x <= VW + 20; x += 16) {
-    const n = x - offset;
-    const y = VH - 18 - hash(n * 0.013 + 4.2) * 16 - Math.sin(n * 0.027 + 1.3) * 5;
-    ctx.lineTo(x, y);
-  }
-  ctx.lineTo(VW + 20, VH + 20);
-  ctx.closePath();
-  ctx.fillStyle = 'rgba(7,12,9,0.92)';
-  ctx.fill();
-
-  ctx.strokeStyle = 'rgba(64,74,53,0.32)';
-  ctx.lineWidth = 1.4;
-  ctx.beginPath();
-  for (let x = -20; x <= VW + 20; x += 16) {
-    const n = x - offset;
-    const y = VH - 18 - hash(n * 0.013 + 4.2) * 16 - Math.sin(n * 0.027 + 1.3) * 5;
-    if (x === -20) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-
-  // foreground reeds on the ledge
-  for (let i = 0; i < 30; i++) {
-    const n = i * 41 + offset * 0.6;
-    const x = ((n % (VW + 80)) + VW + 80) % (VW + 80) - 40;
-    const baseY = VH - 16 - hash(n * 0.013) * 16;
-    const h = 10 + hash(n * 0.031) * 30;
-    const sway = Math.sin(worldTime.t * 0.8 + n * 0.02) * 2;
-    ctx.strokeStyle = 'rgba(7,13,9,0.9)';
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.moveTo(x, baseY);
-    ctx.quadraticCurveTo(x + 2, baseY - h * 0.5, x + sway + (hash(n) - 0.5) * 7, baseY - h);
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-function drawForegroundGrass() {
-  ctx.save();
-  const sway = Math.sin(worldTime.t * 0.9) * 1.5;
-  ctx.strokeStyle = 'rgba(10,17,14,0.86)';
-  for (let i = 0; i < 46; i++) {
-    const x = (i / 45) * (VW + 30) - 15 + Math.sin(i * 7.3) * 8;
-    const h = 6 + hash(i * 3.7) * 17;
-    ctx.lineWidth = 1 + hash(i * 1.9) * 1.4;
-    ctx.beginPath();
-    ctx.moveTo(x, VH + 2);
-    ctx.quadraticCurveTo(x + 2, VH - h * 0.45, x + (hash(i * 2.3) - 0.5) * 9 + sway, VH - h);
-    ctx.stroke();
-  }
-
-  // dark framing reeds in the lower corners
-  for (const side of [0, 1]) {
-    const baseX = side === 0 ? 0 : VW;
-    const dir = side === 0 ? 1 : -1;
-    for (let i = 0; i < 12; i++) {
-      const x = baseX + dir * hash(i * 3.1) * 110;
-      const h = 22 + hash(i * 5.7) * 74;
-      const lean = (hash(i * 2.2) - 0.35) * 38 * dir;
-      ctx.strokeStyle = `rgba(8,14,11,${0.7 + hash(i) * 0.2})`;
-      ctx.lineWidth = 1.4 + hash(i * 1.3) * 2;
-      ctx.beginPath();
-      ctx.moveTo(x, VH + 4);
-      ctx.quadraticCurveTo(x + lean * 0.2, VH - h * 0.55, x + lean + sway, VH - h);
-      ctx.stroke();
-      if (i % 3 === 0) {
-        ctx.fillStyle = 'rgba(8,14,11,0.85)';
-        ctx.beginPath();
-        ctx.ellipse(x + lean * 0.65 + sway * 0.5, VH - h * 0.55, 7, 2.2, side ? -0.6 : 0.6, 0, TAU);
-        ctx.fill();
-      }
-    }
-  }
-
-  ctx.fillStyle = 'rgba(8,13,12,0.45)';
-  ctx.fillRect(0, VH - 2, VW, 2);
-  ctx.restore();
-}
-
-function drawColorGrade() {
-  ctx.save();
-  ctx.globalCompositeOperation = 'soft-light';
-  const g = ctx.createLinearGradient(0, 0, VW, VH);
-  g.addColorStop(0, 'rgba(40,76,80,0.30)');
-  g.addColorStop(0.55, 'rgba(205,178,134,0.16)');
-  g.addColorStop(1, 'rgba(52,37,28,0.24)');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, VW, VH);
-  ctx.restore();
-}
-
-function drawScreenVignette() {
-  const cx = VW / 2, cy = VH / 2;
-  const g = ctx.createRadialGradient(cx, cy, VH * 0.28, cx, cy, VH * 0.86);
-  g.addColorStop(0, 'rgba(6,12,10,0)');
-  g.addColorStop(0.7, 'rgba(6,12,10,0.12)');
-  g.addColorStop(1, 'rgba(5,10,9,0.56)');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, VW, VH);
-
-  const top = ctx.createLinearGradient(0, 0, 0, VH);
-  top.addColorStop(0, 'rgba(168,196,188,0.08)');
-  top.addColorStop(0.35, 'rgba(168,196,188,0)');
-  top.addColorStop(1, 'rgba(8,12,10,0.18)');
-  ctx.fillStyle = top;
-  ctx.fillRect(0, 0, VW, VH);
-
-  if (cam.flash > 0.01) {
-    ctx.fillStyle = `rgba(214,231,222,${cam.flash * 0.18})`;
-    ctx.fillRect(0, 0, VW, VH);
-  }
-}
-
-// ======================================================================
-//  the slugcat
-//  a two-chunk physics core, a follow-through body path, cosmetic IK limbs,
-//  a verlet tail, and a head that is really just a very good excuse for ears.
-// ======================================================================
+// ---------------------------------------------------------------- rig
 
 class Slugcat {
-  constructor(opts = {}) {
-    this.s = opts.scale ?? 1;
-    this.isPlayer = !!opts.player;
-    this.name = opts.name || 'slugcat';
-    this.spawnX = opts.x ?? 0;
-    this.spawnFacing = opts.facing ?? 1;
-    this.tint = opts.tint || COL.fur;
-    this.pup = !!opts.pup;
-    this.speedScale = opts.speedScale ?? (this.pup ? 0.78 : 1);
-
-    this.ride = 13.5 * this.s;
-    this.N = 6;
-    this.spacing = 2.6 * this.s;
-    this.radii = [5.8, 7.6, 9.2, 10.3, 10.5, 9.4].map(r => r * this.s);
-    this.legs = [];
-    this.tail = [];
-    this.history = [];
-    this.spine = [];
-    this.ears = [
-      { side: -1, rot: -0.25, vel: 0, twitchIn: 4 + Math.random() * 5 },
-      { side: 1, rot: -0.1, vel: 0, twitchIn: 3 + Math.random() * 6 },
-    ];
-
-    this.reset(this.spawnX);
-  }
-
-  // -------------------------------------------------------------- reset
-
-  reset(x) {
-    const s = this.s;
-    this.x = x;
-    this.y = groundY(x) - this.ride;
-    this.vx = 0;
-    this.vy = 0;
-    this.onGround = true;
-    this.wasGrounded = true;
-    this.support = { kind: 'ground' };
-    this.floorY = groundY(x);
-    this.facing = this.spawnFacing;
-    this.facingTarget = this.facing;
-    this.t = Math.random() * 10;
-
-    this.jumpBuffer = 0;
-    this.downBuffer = 0;
-    this.jumpHeld = false;
-    this.coyote = 0.1;
-    this.sliding = false;
-    this.slideT = 0;
-    this.slideDust = 0;
-    this.crouch = 0;
-    this.squash = 0;
-    this.squashVel = 0;
-    this.standBlend = 1;
-    this.bob = 0;
-    this.bobVel = 0;
-    this.airMeter = 0;
-    this.flail = 0;
-    this.act = 0;
-    this.idleTimer = 1;
-    this.idleBlend = 1;
-    this.wigglePhase = Math.random() * TAU;
-
-    this.landedThisTick = false;
-    this.dustTimer = 0;
-
-    this.blinkIn = 1.5 + Math.random() * 3;
-    this.blinkT = 0;
-    this.blink = 0;
-    this.squeakT = 0;
-    this.shakeIn = 6 + Math.random() * 9;
-    this.shakeT = 0;
-    this.shakeDust = 0;
-
-    this.look = { x: x + this.facing * 60, y: this.y - 8 };
-    this.gazeX = 0;
-    this.gazeY = 0;
-    this.headTilt = -0.08;
-
-    this.history = [];
-    for (let i = 0; i < 240; i++) {
-      this.history.push({ x: x - this.facing * i, y: this.y });
-    }
-
-    this.spine = [];
-    for (let i = 0; i < this.N; i++) {
-      const u = i / (this.N - 1);
-      this.spine.push({
-        x: x + this.facing * lerp(4.5, -8.5, u) * s,
-        y: this.y + lerp(-13.5, 3.5, u) * s - Math.sin(u * Math.PI) * 2.4 * s,
-      });
-    }
-
-    this.head = {
-      x: this.spine[0].x + this.facing * 4.6 * s,
-      y: this.spine[0].y - 4.2 * s,
-    };
-
-    this.setupLegs();
-    this.setupTail();
-  }
-
-  setupLegs() {
-    const s = this.s;
-    const defs = [
-      { front: true,  far: false, anchor: 1, pair: 0, l1: 11.0, l2: 9.5, width: 2.2,  name: 'front near' },
-      { front: true,  far: true,  anchor: 2, pair: 1, l1: 10.5, l2: 9.0, width: 1.9,  name: 'front far' },
-      { front: false, far: true,  anchor: 4, pair: 0, l1: 9.5, l2: 8.5, width: 3.4,  name: 'hind far' },
-      { front: false, far: false, anchor: 5, pair: 1, l1: 10.0, l2: 8.8, width: 3.8, name: 'hind near' },
-    ];
-    this.legs = defs.map(d => ({
-      ...d,
-      l1: d.l1 * s,
-      l2: d.l2 * s,
-      width: d.width * s,
+  constructor() {
+    this.legs = [
+      { front: true,  far: false, group: 0, l1: 18, l2: 16, w1: 3.3, w2: 2.7 },
+      { front: true,  far: true,  group: 1, l1: 17, l2: 15, w1: 3.0, w2: 2.4 },
+      { front: false, far: true,  group: 0, l1: 15, l2: 13, w1: 5.0, w2: 4.2 },
+      { front: false, far: false, group: 1, l1: 16, l2: 14, w1: 5.4, w2: 4.5 },
+    ].map(l => ({
+      ...l,
       foot: { x: 0, y: 0 },
-      knee: { x: 0, y: 0 },
       ikFoot: { x: 0, y: 0 },
+      knee: { x: 0, y: 0 },
       hip: { x: 0, y: 0 },
       step: null,
-      footAngle: 0,
       cooldown: 0,
     }));
 
-    // start with the front paws hanging under the chest and the hind feet
-    // planted — the classic slugcat sit.
-    for (const leg of this.legs) {
-      const a = this.legAnchor(leg);
-      leg.hip = a;
-      if (leg.front) {
-        leg.foot = {
-          x: a.x + this.facing * (leg.far ? 1.2 : 3.0) * s,
-          y: a.y + 15.8 * s,
-        };
-      } else {
-        const fx = a.x + this.facing * (leg.far ? -3.6 : -1.5) * s;
-        leg.foot = { x: fx, y: this.surfaceAt(fx) - 0.5 * s };
-      }
-      leg.footAngle = Math.atan2(groundY(leg.foot.x + 2) - groundY(leg.foot.x - 2), 4);
+    this.reset();
+  }
+
+  reset() {
+    this.x = 0;
+    this.y = FLOOR - RIDE;
+    this.vx = 0;
+    this.vy = 0;
+    this.facing = 1;
+    this.grounded = true;
+    this.coyote = 0.1;
+    this.jumpBuffer = 0;
+    this.jumpHeld = false;
+    this.stand = 1;
+    this.idleTimer = 1;
+    this.spine = 1.22;
+    this.spineVel = 0;
+    this.bob = 0;
+    this.bobVel = 0;
+    this.squash = 0;
+    this.squashVel = 0;
+    this.breath = 0;
+    this.act = 0;
+    this.airMeter = 0;
+    this.flail = 0;
+    this.t = Math.random() * 10;
+    this.justLanded = false;
+    this.lastStepGroup = -1;
+    this.groupCooldown = 0;
+
+    this.headTilt = 0;
+    this.blinkIn = 1.6 + Math.random() * 3;
+    this.blinkT = 0;
+    this.blink = 0;
+    this.earTilt = 0;
+    this.earVel = 0;
+
+    this.tail = [];
+    this.tailLen = 9;
+    this.tailRadii = [];
+    for (let i = 0; i < this.tailLen; i++) {
+      const r = lerp(6.0, 0.9, Math.pow(i / (this.tailLen - 1), 0.8));
+      this.tailRadii.push(r);
+      this.tail.push({ x: 0, y: 0, px: 0, py: 0 });
     }
-    this.solveLegs();
+
+    this.coreHip = { x: 0, y: 0 };
+    this.coreChest = { x: 0, y: 0 };
+    this.computeCore();
+    this.headX = this.coreChest.x + this.facing * 15;
+    this.headY = this.coreChest.y - 10;
+    this.placeFeet();
+    this.resetTail();
+  }
+
+  // ------------------------------------------------------------- core
+
+  computeCore() {
+    this.breath = Math.sin(this.t * 2.05) * 0.45 * (1 - this.act * 0.55) * (this.grounded ? 1 : 0.25);
+    const bodyY = this.y + this.bob;
+    this.coreHip.x = this.x;
+    this.coreHip.y = bodyY;
+    this.coreChest.x = this.x + this.facing * BODY_LEN * Math.cos(this.spine);
+    this.coreChest.y = bodyY - BODY_LEN * Math.sin(this.spine) - this.breath;
   }
 
   legAnchor(leg) {
-    const n = this.spine[leg.anchor] || this.spine[0];
-    const s = this.s;
-    let xOff, drop;
     if (leg.front) {
-      xOff = leg.far ? 3.0 : 9.0;
-      drop = leg.far ? 0.8 : 1.8;
-    } else {
-      xOff = leg.far ? -11.0 : -7.0;
-      drop = leg.far ? 4.0 : 5.0;
+      return {
+        x: this.coreChest.x - this.facing * (2 + (leg.far ? 2.2 : 0)) + (leg.far ? -1 : 1),
+        y: this.coreChest.y + UPPER_R * 0.55 + (leg.far ? -2 : 2),
+      };
     }
     return {
-      x: n.x + this.facing * xOff * s,
-      y: n.y + drop * s,
+      x: this.coreHip.x - this.facing * (2 + (leg.far ? 2.2 : 0)) + (leg.far ? -1 : 1),
+      y: this.coreHip.y + HIP_R * 0.42 + (leg.far ? -2 : 2),
     };
   }
 
-  setupTail() {
-    const s = this.s;
-    const base = this.spine[this.N - 1];
-    this.tail = [];
-    this.tailLen = 8;
-    this.tailSeg = 3.8 * s;
-    this.tailRadii = [];
+  groundHome(leg, anchor) {
+    const speed = Math.abs(this.vx);
+    const side = this.facing * (leg.far ? -4.5 : 4.5);
+    if (leg.front) {
+      return {
+        x: anchor.x + this.facing * (10 + this.act * 10) + side,
+        y: FLOOR - 1.5,
+      };
+    }
+    return {
+      x: anchor.x - this.facing * (1.5 - this.act * 2.5) + side,
+      y: FLOOR - 1.5,
+    };
+  }
+
+  frontHang(leg, anchor) {
+    const sway = Math.sin(this.t * 1.35 + (leg.far ? 1.8 : 0)) * (0.6 + this.act * 1.4);
+    return {
+      x: anchor.x + this.facing * ((leg.far ? 8 : 13) + sway),
+      y: anchor.y + 20 + (leg.far ? -1 : 1),
+    };
+  }
+
+  airTarget(leg, anchor) {
+    const flail = this.flail;
+    const wobble = Math.sin(this.t * 8.5 + (leg.front ? 0 : 2.4) + (leg.far ? 1.7 : 0));
+    if (leg.front) {
+      let tx = anchor.x + this.facing * (2 + flail * (4 + wobble * 5));
+      let ty = anchor.y + 14 + flail * (12 + Math.cos(this.t * 7 + 1) * 5);
+      if (flail > 0.04) {
+        const px = anchor.x + this.facing * (12 + flail * 22);
+        const py = FLOOR - 2;
+        const dx = px - anchor.x, dy = py - anchor.y;
+        if (Math.hypot(dx, dy) < (leg.l1 + leg.l2) * 0.93) {
+          tx = lerp(tx, px, flail * 0.8);
+          ty = lerp(ty, py, flail * 0.75);
+        }
+      }
+      return { x: tx, y: ty };
+    }
+    return {
+      x: anchor.x - this.facing * (2 + flail * (8 - wobble * 4)),
+      y: anchor.y + 13 + flail * (7 + wobble * 4),
+    };
+  }
+
+  placeFeet() {
+    this.computeCore();
+    for (const leg of this.legs) {
+      const a = this.legAnchor(leg);
+      leg.hip = a;
+      leg.step = null;
+      leg.cooldown = 0;
+      if (!this.grounded) {
+        const t = this.airTarget(leg, a);
+        leg.foot.x = t.x;
+        leg.foot.y = t.y;
+      } else if (leg.front && this.stand > 0.42) {
+        const t = this.frontHang(leg, a);
+        leg.foot.x = t.x;
+        leg.foot.y = t.y;
+      } else {
+        const t = this.groundHome(leg, a);
+        leg.foot.x = t.x;
+        leg.foot.y = t.y;
+      }
+      this.solveLeg(leg);
+    }
+  }
+
+  resetTail() {
+    const ax = this.coreHip.x - this.facing * (HIP_R * 0.72);
+    const ay = this.coreHip.y + HIP_R * 0.42;
     for (let i = 0; i < this.tailLen; i++) {
-      const r = lerp(4.0, 0.6, Math.pow(i / (this.tailLen - 1), 0.72)) * s;
-      this.tailRadii.push(r);
-      const x = base.x - this.facing * (2.4 + i * 3.8) * s;
-      const y = base.y + i * 0.7 * s;
-      this.tail.push({ x, y, px: x, py: y });
+      const n = this.tail[i];
+      n.x = ax - this.facing * i * 6.3;
+      n.y = ay + i * 0.45;
+      n.px = n.x;
+      n.py = n.y;
     }
   }
 
-  // ------------------------------------------------------------ utilities
-
-  surfaceAt(x) {
-    if (this.support && this.support.kind === 'platform') {
-      const p = this.support.p;
-      if (x > p.x - 2 && x < p.x + p.w + 2) return p.y;
-    }
-    return groundY(x);
-  }
-
-  setLook(x, y) {
-    this.look.x = x;
-    this.look.y = y;
-  }
-
-  get inAir() { return !this.onGround; }
-
-  get stateName() {
-    if (this.sliding) return 'slide';
-    if (!this.onGround) return this.flail > 0.35 ? 'flail' : 'air';
-    if (this.crouch > 0.5) return 'crouch';
-    if (Math.abs(this.vx) > runSpeed * 0.72) return 'run';
-    if (Math.abs(this.vx) > 7) return 'walk';
-    if (this.idleBlend > 0.5) return 'idle';
-    return 'settle';
-  }
-
-  // -------------------------------------------------------------- physics
+  // ------------------------------------------------------------- update
 
   update(dt, ctrl) {
-    const s = this.s;
     this.t += dt;
-    this.landedThisTick = false;
+    this.justLanded = false;
 
-    // a little input housekeeping
     if (ctrl.jumpPressed) this.jumpBuffer = 0.13;
     else this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
-    if (ctrl.downPressed) this.downBuffer = 0.16;
-    else this.downBuffer = Math.max(0, this.downBuffer - dt);
-    this.coyote = this.onGround ? 0.1 : Math.max(0, this.coyote - dt);
+    this.coyote = this.grounded ? 0.1 : Math.max(0, this.coyote - dt);
 
     const move = clamp(ctrl.move || 0, -1, 1);
     if (move !== 0) {
       this.facing = sign(move);
-      this.facingTarget = this.facing;
     }
 
-    if (this.squeakT > 0) this.squeakT = Math.max(0, this.squeakT - dt);
-    if (this.isPlayer && press.squeak) {
-      press.squeak = false;
-      this.squeakT = 0.28;
-      audio.squeak();
-      this.ears[0].vel += 2.2;
-      this.ears[1].vel += 1.8;
-    }
-
-    // slide / belly slide — forgiving around ledges and landings
-    if (!this.sliding && (this.onGround || this.coyote > 0) && Math.abs(this.vx) > walkSpeed * 1.1
-        && (this.downBuffer > 0 || (ctrl.down && this.onGround))) {
-      this.sliding = true;
-      this.downBuffer = 0;
-      this.slideT = 0.55 + clamp(Math.abs(this.vx) / 500, 0, 0.3);
-      this.slideDust = 0;
-      this.jumpBuffer = 0;
-      if (this.isPlayer) audio.step(1.1, true);
-      spawnSplash(this.x, this.floorY, 5, 0.8);
-    }
-    if (this.sliding) {
-      this.slideT -= dt;
-      if (this.slideT <= 0 || Math.abs(this.vx) < 38 || !this.onGround) {
-        this.sliding = false;
-      }
-    }
-
-    const wantCrouch = ctrl.down && this.onGround && !this.sliding && Math.abs(this.vx) < 55;
-    this.crouch = damp(this.crouch, wantCrouch ? 1 : 0, 13, dt);
-
-    // ground / air movement
-    const slope = groundSlope(this.x);
-    if (this.onGround) {
-      if (this.sliding) {
-        this.vx += slope * 300 * dt;
-        this.vx *= 1 - 0.75 * dt;
-        if (move !== 0 && sign(move) !== sign(this.vx)) this.vx = approach(this.vx, 0, 190 * dt);
-        if (Math.abs(this.vx) < 38) this.sliding = false;
+    // horizontal motion
+    const maxSpeed = ctrl.sprint ? RUN : WALK;
+    if (this.grounded) {
+      if (move !== 0) {
+        const target = move * maxSpeed;
+        const skid = sign(move) !== sign(this.vx) && Math.abs(this.vx) > 12;
+        this.vx = approach(this.vx, target, (skid ? 2100 : 1450) * dt);
       } else {
-        let max = (ctrl.sprint ? runSpeed : walkSpeed) * this.speedScale;
-        if (this.crouch > 0.45) max = 40;
-        if (move !== 0) {
-          const target = move * max;
-          let rate = 1050;
-          if (sign(move) !== sign(this.vx) && Math.abs(this.vx) > 12) rate = 1850;
-          this.vx = approach(this.vx, target, rate * dt);
-          this.vx += slope * 240 * dt;
-        } else {
-          const friction = this.crouch > 0.4 ? 1500 : 1250;
-          this.vx = approach(this.vx, 0, friction * dt);
-        }
+        this.vx = approach(this.vx, 0, 1900 * dt);
       }
     } else {
       if (move !== 0) {
-        const target = move * (ctrl.sprint ? runSpeed * 1.02 : walkSpeed * 1.25) * this.speedScale;
+        const target = move * RUN * 0.96;
         if (Math.abs(this.vx) < Math.abs(target) || sign(this.vx) !== sign(target)) {
-          this.vx = approach(this.vx, target, 440 * dt);
+          this.vx = approach(this.vx, target, 480 * dt);
         }
-        this.vx += slope * 85 * dt;
       }
-      this.vx *= 1 - 0.10 * dt;
+      this.vx *= 1 - 0.08 * dt;
     }
+    this.vx = clamp(this.vx, -RUN * 1.2, RUN * 1.2);
+    this.x += this.vx * dt;
 
-    if (!this.sliding) this.vx = clamp(this.vx, -runSpeed * 1.3, runSpeed * 1.3);
-
-    // jump / variable jump height
+    // jump
     if (!ctrl.jump) {
-      if (this.jumpHeld && this.vy < -95) this.vy *= 0.54;
+      if (this.jumpHeld && this.vy < -90) this.vy *= 0.54;
       this.jumpHeld = false;
     }
     if (ctrl.jump) this.jumpHeld = true;
 
-    if (this.jumpBuffer > 0 && (this.onGround || this.coyote > 0)) {
-      let jumpVel = 300;
-      if (this.sliding) {
-        jumpVel = 328;
-        this.vx += this.facing * 52;
-        this.sliding = false;
-      } else if (ctrl.sprint && Math.abs(this.vx) > 100) {
-        jumpVel = 318;
-      }
-      this.vy = -jumpVel * (0.7 + 0.3 * s);
-      this.vx += this.facing * (this.crouch > 0.4 ? 4 : 14);
-      this.onGround = false;
+    if (this.jumpBuffer > 0 && (this.grounded || this.coyote > 0)) {
+      this.vy = -(ctrl.sprint ? 430 : 382);
+      this.vx += this.facing * (ctrl.sprint ? 24 : 10);
+      this.grounded = false;
       this.coyote = 0;
       this.jumpBuffer = 0;
       this.jumpHeld = true;
-      this.airMeter = 0.35;
-      this.squash = -0.22;
-      this.squashVel = 0;
+      this.airMeter = 0.12;
       this.flail = 0;
-      spawnDust(this.x, this.floorY, 4, 0.8, true);
-      spawnSplash(this.x, this.floorY, 3, 0.6);
-      if (this.isPlayer) audio.jump();
+      this.squash = -0.18;
+      this.squashVel = 0;
+      this.spineVel -= 0.9 + (ctrl.sprint ? 0.9 : 0);
+      this.bobVel = 0;
+      this.idleTimer = 0;
     }
 
-    // gravity
-    let g = gravity;
-    if (this.vy < 0 && ctrl.jump) g *= 0.73;
-    if (this.vy > 0) g *= 1.08;
-    this.vy += g * dt;
-    this.vy = Math.min(this.vy, 940);
+    // vertical motion
+    if (!this.grounded) {
+      let g = GRAVITY;
+      if (this.vy < 0 && ctrl.jump) g *= 0.72;
+      if (this.vy > 0) g *= 1.12;
+      this.vy = Math.min(this.vy + g * dt, 1250);
+      this.y += this.vy * dt;
 
-    // integrate
-    this.x += this.vx * dt;
-    const prevBottom = this.y + this.ride;
-    this.y += this.vy * dt;
-    const newBottom = this.y + this.ride;
-
-    let floor = groundY(this.x);
-    let supportPlatform = null;
-    for (const p of platformsNear(this.x - 12 * s, this.x + 12 * s)) {
-      if (this.x < p.x - 2 || this.x > p.x + p.w + 2) continue;
-      if (this.vy >= 0 && prevBottom <= p.y + 0.75 && newBottom >= p.y - 0.1) {
-        if (!supportPlatform || p.y < supportPlatform.y) supportPlatform = p;
-      }
-    }
-    if (supportPlatform) floor = supportPlatform.y;
-
-    this.wasGrounded = this.onGround;
-    const impact = this.vy;
-    if (newBottom >= floor) {
-      this.y = floor - this.ride;
-      this.vy = 0;
-      this.onGround = true;
-      this.support = supportPlatform ? { kind: 'platform', p: supportPlatform } : { kind: 'ground' };
-      this.floorY = floor;
-
-      if (!this.wasGrounded) {
-        this.landedThisTick = true;
-        const strength = clamp(impact / 620, 0.08, 1.25);
-        this.squash = Math.max(this.squash, strength);
-        this.squashVel = -1.1 * strength;
-        this.flail = 0;
-        this.airMeter = 0;
-        if (impact > 120) {
-          spawnDust(this.x, floor, 3 + Math.floor(strength * 6), 0.7 + strength, true);
-          spawnSplash(this.x, floor, 2 + Math.floor(strength * 4), 0.5 + strength * 0.7);
-          if (impact > 260) {
-            if (this.isPlayer) {
-              cam.shake = Math.min(8, cam.shake + strength * 4.5);
-              audio.land(strength * 1.1);
-            }
-          }
-        }
-        for (const leg of this.legs) {
-          leg.step = null;
-          leg.cooldown = 0;
-        }
-        for (const ear of this.ears) ear.vel += strength * 2;
-      }
-    } else {
-      if (this.wasGrounded) {
-        this.coyote = 0.1;
-        this.airMeter = 0.1;
-      }
-      this.onGround = false;
-      this.support = null;
-      this.floorY = floor;
-    }
-
-    // stick to gentle downhill ground instead of micro-hopping down every slope
-    if (!this.onGround && this.wasGrounded && this.vy >= 0 && !supportPlatform) {
-      const gap = floor - (this.y + this.ride);
-      if (gap > 0 && gap < 7 * s) {
-        this.y = floor - this.ride;
+      if (this.y >= FLOOR - RIDE) {
+        const impact = this.vy;
+        this.y = FLOOR - RIDE;
         this.vy = 0;
-        this.onGround = true;
-        this.support = { kind: 'ground' };
-        this.floorY = floor;
+        this.grounded = true;
         this.coyote = 0;
+        this.airMeter = 0;
+        this.flail = 0;
+        this.stand = 0;
+        this.idleTimer = 0;
+        this.squash = clamp(impact / 760, 0.1, 0.9);
+        this.squashVel = 0;
+        this.bobVel += clamp(impact / 820, 0, 1.3) * 1.8;
+        this.spineVel += this.facing * 0.18;
+        this.justLanded = true;
       }
-    }
-
-    // air-time flailing, as described in the rain world devlog:
-    // it accumulates with time in the air and speed, not with a timer.
-    if (!this.onGround) {
-      this.airMeter += dt * (0.75 + Math.abs(this.vx) / 175 + Math.abs(this.vy) / 520);
     } else {
-      this.airMeter = Math.max(0, this.airMeter - dt * 5);
-    }
-    this.flail = damp(this.flail, smoothstep(clamp((this.airMeter - 1.15) / 1.3, 0, 1)), 8, dt);
-
-    // state smoothing
-    this.act = damp(this.act, clamp(Math.abs(this.vx) / runSpeed, 0, 1), 8, dt);
-    const still = this.onGround && Math.abs(this.vx) < 7 && move === 0;
-    if (still) this.idleTimer += dt; else this.idleTimer = 0;
-    let idleTarget = smoothstep(clamp((this.idleTimer - 0.22) / 0.55, 0, 1));
-    if (this.sliding || this.crouch > 0.3) idleTarget = 0;
-    this.idleBlend = damp(this.idleBlend, idleTarget, 7, dt);
-
-    // occasional wet shiver
-    this.shakeIn -= dt;
-    if (this.shakeIn <= 0) {
-      this.shakeIn = 7 + Math.random() * 9;
-      if (this.onGround && Math.abs(this.vx) < 9 && this.idleBlend > 0.45) {
-        this.shakeT = 0.42;
-        this.shakeDust = 0;
-        for (const ear of this.ears) {
-          ear.vel += (Math.random() < 0.5 ? -1 : 1) * (1.4 + Math.random() * 1.6);
-        }
-      }
-    }
-    if (this.shakeT > 0) {
-      this.shakeT = Math.max(0, this.shakeT - dt);
-      this.shakeDust -= dt;
-      if (this.shakeDust <= 0) {
-        this.shakeDust = 0.055;
-        for (let i = 0; i < 2; i++) {
-          particles.push({
-            kind: 'drop',
-            x: this.x + rand(-12, 12) * this.s,
-            y: this.y + rand(-12, 2) * this.s,
-            vx: rand(-60, 60),
-            vy: rand(-90, -20),
-            life: rand(0.25, 0.45),
-            max: 0.45,
-            r: rand(0.5, 1.1),
-            wet: true,
-          });
-        }
-      }
+      this.y = FLOOR - RIDE;
     }
 
-    const standTarget = this.sliding ? 0 : this.onGround ? (1 - this.crouch * 0.8) : 0.16;
-    this.standBlend = damp(this.standBlend, standTarget, this.onGround ? 10 : 6, dt);
-    this.bobVel += (-this.bob * 160 - this.bobVel * 18) * dt;
-    this.bob = clamp(this.bob + this.bobVel * dt, -3, 3);
+    // idle / standing
+    if (this.grounded && Math.abs(this.vx) < 7 && move === 0) this.idleTimer += dt;
+    else this.idleTimer = 0;
+    let standTarget = this.grounded ? smoothstep(clamp((this.idleTimer - 0.28) / 0.55, 0, 1)) : 0;
+    this.stand = damp(this.stand, standTarget, 7, dt);
 
-    this.wigglePhase += dt * (1.6 + Math.abs(this.vx) * 0.062);
+    this.act = damp(this.act, clamp(Math.abs(this.vx) / RUN, 0, 1), 7, dt);
 
-    // squash spring
-    this.squashVel += (-this.squash * 95 - this.squashVel * 12.5) * dt;
-    this.squash += this.squashVel * dt;
-    this.squash = clamp(this.squash, -0.32, 1.0);
-
-    // sliding debris
-    if (this.sliding && this.onGround && Math.abs(this.vx) > 45) {
-      this.slideDust -= dt;
-      if (this.slideDust <= 0) {
-        this.slideDust = 0.055;
-        spawnDust(this.x - this.facing * 12 * s, this.floorY, 1, 0.55, true);
-        if (Math.random() < 0.5) spawnSplash(this.x - this.facing * 9 * s, this.floorY, 1, 0.5);
-      }
+    // air-time flail
+    if (!this.grounded) {
+      this.airMeter += dt * (0.7 + Math.abs(this.vy) / 620 + Math.abs(this.vx) / 260);
+    } else {
+      this.airMeter = Math.max(0, this.airMeter - dt * 4);
     }
+    const flailTarget = smoothstep(clamp((this.airMeter - 0.9) / 1.0, 0, 1));
+    this.flail = damp(this.flail, flailTarget, 8, dt);
 
-    // sprint steps kick up a little spray
-    if (this.onGround && ctrl.sprint && Math.abs(this.vx) > walkSpeed) {
-      this.dustTimer -= dt;
-      if (this.dustTimer <= 0) {
-        this.dustTimer = 0.11;
-        spawnDust(this.x - this.facing * 10 * s, this.floorY, 1, 0.45, true);
-      }
+    // spine: crawl when moving, sit up when idle, loosen in the air
+    let target;
+    let stiff;
+    let damping;
+    if (this.grounded) {
+      const crawl = 0.34 - this.act * 0.085;
+      target = lerp(crawl, 1.22, this.stand);
+      target += Math.sin(this.t * 1.7) * 0.012 * (1 - this.act) * this.stand;
+      stiff = 75;
+      damping = 12;
+    } else {
+      target = 0.57 - clamp(this.vy * 0.00052, -0.38, 0.38) + this.act * 0.08;
+      stiff = 22;
+      damping = 4.5;
     }
+    this.spineVel += ((target - this.spine) * stiff - this.spineVel * damping) * dt;
+    this.spine = clamp(this.spine + this.spineVel * dt, -0.32, 1.72);
 
-    // trail, pose, limbs, tail, face
-    this.updateHistory(dt);
-    this.updateSpine(dt);
+    // body bob + squash springs
+    this.bobVel += (-this.bob * 170 - this.bobVel * 20) * dt;
+    this.bob = clamp(this.bob + this.bobVel * dt, -6, 9);
+    this.squashVel += (-this.squash * 120 - this.squashVel * 13) * dt;
+    this.squash = clamp(this.squash + this.squashVel * dt, -0.32, 1);
+
+    this.computeCore();
+    if (this.justLanded) this.placeFeet();
+
+    const headTX = this.coreChest.x + this.facing * lerp(15, 8, this.stand);
+    const headTY = this.coreChest.y - lerp(10, 18, this.stand);
+    this.headX = damp(this.headX, headTX, 24, dt);
+    this.headY = damp(this.headY, headTY, 22, dt);
+
     this.updateLegs(dt);
     this.updateTail(dt);
     this.updateFace(dt);
-
-    if (this.isPlayer && this.y > 900) this.reset(this.spawnX);
   }
 
-  updateHistory(dt) {
-    const h = this.history;
-    const last = h[h.length - 1];
-    if (!last || Math.hypot(this.x - last.x, this.y - last.y) > 0.42) {
-      h.push({ x: this.x, y: this.y });
-      let total = 0;
-      for (let i = h.length - 1; i > 0; i--) {
-        total += Math.hypot(h[i].x - h[i - 1].x, h[i].y - h[i - 1].y);
-        if (total > 190) {
-          h.splice(0, i);
-          break;
-        }
-      }
-      if (h.length > 420) h.splice(0, h.length - 320);
-    }
-  }
-
-  // distance is measured backwards from the current root position
-  samplePath(dist) {
-    if (dist <= 0) {
-      return { x: this.x + this.facing * (-dist), y: this.y };
-    }
-    const h = this.history;
-    let px = this.x, py = this.y;
-    let remaining = dist;
-    for (let i = h.length - 1; i >= 0; i--) {
-      const q = h[i];
-      const seg = Math.hypot(q.x - px, q.y - py);
-      if (seg < 0.0001) continue;
-      if (remaining <= seg) {
-        const t = remaining / seg;
-        return { x: lerp(px, q.x, t), y: lerp(py, q.y, t) };
-      }
-      remaining -= seg;
-      px = q.x;
-      py = q.y;
-    }
-    return { x: px - this.facing * remaining, y: py };
-  }
-
-  // ---------------------------------------------------------------- spine
-
-  updateSpine(dt) {
-    const s = this.s;
-    const N = this.N;
-    const idle = this.idleBlend;
-    const points = [];
-
-    for (let i = 0; i < N; i++) {
-      const d = (-6.2 + i * this.spacing / s) * s;
-      const p = this.samplePath(d);
-      points.push(p);
-    }
-
-    // ripple along the body while moving
-    for (let i = 0; i < N; i++) {
-      const a = points[Math.max(0, i - 1)];
-      const b = points[Math.min(N - 1, i + 1)];
-      const tx = b.x - a.x, ty = b.y - a.y;
-      const tl = Math.hypot(tx, ty) || 1;
-      const nx = -ty / tl, ny = tx / tl;
-      const wave = Math.sin(this.wigglePhase - i * 0.82);
-      const amp = (0.25 + this.act * 1.1 + this.flail * 0.7) * (1 - this.standBlend * 0.7);
-      const lateral = wave * amp * (0.35 + (i / (N - 1)) * 0.8);
-      points[i].x += nx * lateral;
-      points[i].y += ny * lateral;
-
-      // gentle arch
-      points[i].y -= Math.sin(Math.PI * i / (N - 1)) * (0.8 + this.act * 1.0) * (1 - idle);
-    }
-
-    // the standing / scurrying pose. hips are low, chest is high,
-    // and the whole body leans further forward as speed builds.
-    const stand = this.standBlend;
-    const lean = smoothstep(clamp(this.act * 1.15, 0, 1));
-    if (stand > 0.001) {
-      const breath = Math.sin(this.t * 2.05) * 0.32;
-      const settle = Math.sin(this.t * 0.73) * 0.2 * (1 - lean);
-      const neckX = lerp(4.5, 7.5, lean);
-      const neckY = lerp(-13.5, -11.2, lean);
-      const rumpX = lerp(-8.5, -6.0, lean);
-      const rumpY = lerp(3.5, 3.8, lean);
-      const arch = lerp(2.4, 2.8, lean);
-      for (let i = 0; i < N; i++) {
-        const u = i / (N - 1);
-        const gaitWave = Math.sin(this.wigglePhase * 0.52 + u * 2.7 + 0.6) * (0.3 + lean * 0.7) * (1 - u);
-        const lx = lerp(neckX, rumpX, u) + settle * (0.3 + u) + gaitWave;
-        let ly = lerp(neckY, rumpY, u) - Math.sin(u * Math.PI) * arch - breath * (1 - u * 0.7);
-        ly += this.bob * (0.35 + u * 0.65);
-        const ix = this.x + this.facing * lx * s;
-        const iy = this.y + ly * s;
-        points[i].x = lerp(points[i].x, ix, stand);
-        points[i].y = lerp(points[i].y, iy, stand);
-      }
-    }
-
-    // cosmetic shiver — water shaken out of the fur
-    if (this.shakeT > 0) {
-      const amp = (this.shakeT / 0.42) * 1.7 * s;
-      for (let i = 0; i < N; i++) {
-        const u = i / (N - 1);
-        points[i].x += Math.sin(this.t * 68 + i * 1.9) * amp * (0.25 + u * 0.75);
-        points[i].y += Math.cos(this.t * 61 + i * 1.5) * amp * 0.35;
-      }
-    }
-
-    // crouch / slide flattening
-    const low = Math.max(this.crouch, this.sliding ? 1 : 0);
-    if (low > 0.001) {
-      for (let i = 0; i < N; i++) {
-        const u = i / (N - 1);
-        points[i].y += low * (1.3 + u * 2.4) * s;
-        points[i].x -= this.facing * low * (u - 0.5) * 2.4 * s;
-      }
-    }
-
-    // keep the body from sinking through the floor on steep ground
-    for (let i = 0; i < N; i++) {
-      const minY = groundY(points[i].x) - this.radii[i] - 0.8 * s;
-      if (points[i].y > minY) points[i].y = minY;
-    }
-
-    this.spine = points;
-
-    // head target: a little forward of the neck, with a light spring
-    const neck = points[0];
-    const trailLift = 9.0 - idle * 4.6;
-    const standLift = 4.6 + lean * 0.6;
-    const headLift = lerp(trailLift, standLift, stand);
-    const targetHX = neck.x + this.facing * 4.6 * s;
-    const targetHY = neck.y - (headLift + this.crouch * 1.4) * s;
-    this.head.x = damp(this.head.x, targetHX, 29, dt);
-    this.head.y = damp(this.head.y, targetHY, 25, dt);
-    const hdx = this.head.x - targetHX;
-    const hdy = this.head.y - targetHY;
-    const hDist = Math.hypot(hdx, hdy);
-    const hMax = 3.4 * s;
-    if (hDist > hMax) {
-      this.head.x = targetHX + hdx / hDist * hMax;
-      this.head.y = targetHY + hdy / hDist * hMax;
-    }
-
-    const bodyTilt = Math.atan2(
-      (points[0].y - points[2].y) * this.facing,
-      Math.max(4, Math.abs(points[0].x - points[2].x))
-    );
-    const localLookX = (this.look.x - this.head.x) * this.facing;
-    const localLookY = this.look.y - this.head.y;
-    const lookPitch = clamp(Math.atan2(localLookY, Math.max(14, Math.abs(localLookX))) * 0.6, -0.33, 0.3);
-    const airPitch = this.onGround ? 0 : clamp(-this.vy * 0.00055, -0.22, 0.2);
-    this.headTilt = clamp(
-      bodyTilt * 0.34 + lookPitch * 0.55 + airPitch - idle * 0.09 - (1 - idle) * 0.08,
-      -0.48, 0.42
-    );
-
-    this.gazeX = damp(this.gazeX, clamp(localLookX / 42, -1, 1), 10, dt);
-    this.gazeY = damp(this.gazeY, clamp(localLookY / 38, -1, 1), 10, dt);
-  }
-
-  // ----------------------------------------------------------------- legs
+  // ------------------------------------------------------------- legs
 
   updateLegs(dt) {
-    const speed = Math.abs(this.vx);
-    for (const leg of this.legs) {
-      this.updateLeg(leg, dt, speed);
-    }
+    for (const leg of this.legs) this.updateLeg(leg, dt);
+    this.scheduleGait(dt);
   }
 
-  updateLeg(leg, dt, speed) {
-    const s = this.s;
-    const anchor = this.legAnchor(leg);
-    leg.hip = anchor;
+  updateLeg(leg, dt) {
+    const a = this.legAnchor(leg);
+    leg.hip = a;
     leg.cooldown = Math.max(0, leg.cooldown - dt);
+    leg.stepHome = null;
+    leg.stepErr = 0;
+    leg.stepThreshold = 0;
 
-    // standing / scurrying posture: the arms swing free in front,
-    // the two hind legs carry the gait.
-    if (this.onGround && !this.sliding && this.standBlend > 0.3) {
-      if (leg.front) {
-        const swing = Math.sin(this.wigglePhase * 0.9 + (leg.far ? Math.PI : 0));
-        const breathe = Math.sin(this.t * 2.05 + (leg.far ? 1.1 : 0)) * 0.3;
-        const tx = anchor.x + this.facing * ((leg.far ? 3.5 : 7.0) + swing * (0.5 + this.act * 4.2)) * s;
-        const ty = anchor.y + (15.5 - this.act * 1.0 + breathe - clamp(this.squash, 0, 1) * 3.4) * s;
-        leg.foot.x = damp(leg.foot.x, tx, 11, dt);
-        leg.foot.y = damp(leg.foot.y, ty, 11, dt);
-        leg.footAngle = damp(leg.footAngle, -0.12 + swing * 0.12, 6, dt);
-        leg.step = null;
-        this.solveLeg(leg);
-        return;
-      } else if (this.idleBlend > 0.55 && speed < 12) {
-        // settle the hind feet under the hips while resting
-        const tx = anchor.x + this.facing * (leg.far ? -3.6 : -1.5) * s;
-        const ty = this.surfaceAt(tx) - 0.5 * s;
-        leg.foot.x = damp(leg.foot.x, tx, 7, dt);
-        leg.foot.y = damp(leg.foot.y, ty, 10, dt);
-        leg.footAngle = Math.atan2(groundY(leg.foot.x + 2) - groundY(leg.foot.x - 2), 4);
-        leg.step = null;
-        this.solveLeg(leg);
-        return;
-      }
+    if (!this.grounded) {
+      leg.step = null;
+      const t = this.airTarget(leg, a);
+      leg.foot.x = damp(leg.foot.x, t.x, 10, dt);
+      leg.foot.y = damp(leg.foot.y, t.y, 10, dt);
+      this.solveLeg(leg);
+      return;
     }
 
-    if (!this.onGround || this.sliding || this.landedThisTick) {
-      if (this.landedThisTick) {
-        leg.step = null;
-        const fx = anchor.x + this.facing * (leg.front ? 2.0 : -1.5) * s;
-        leg.foot.x = fx;
-        leg.foot.y = this.surfaceAt(fx) - 0.5 * s;
-        leg.footAngle = Math.atan2(
-          groundY(leg.foot.x + 2) - groundY(leg.foot.x - 2), 4
-        );
-      }
+    const lift = leg.front ? smoothstep(clamp((this.stand - 0.12) / 0.48, 0, 1)) : 0;
+    if (lift > 0.02) {
+      leg.step = null;
+      const ground = this.groundHome(leg, a);
+      const hang = this.frontHang(leg, a);
+      const tx = lerp(ground.x, hang.x, lift);
+      const ty = lerp(ground.y, hang.y, lift);
+      leg.foot.x = damp(leg.foot.x, tx, 12, dt);
+      leg.foot.y = damp(leg.foot.y, ty, 12, dt);
+      this.solveLeg(leg);
+      return;
     }
 
-    if (!this.onGround) {
-      // tuck the limbs; if we have been falling for long, start reaching
-      leg.step = null;
-      const flail = this.flail;
-      const osc = Math.sin(this.t * 8.5 + leg.anchor * 2 + (leg.far ? 2.2 : 0));
-      let tx, ty;
-      if (leg.front) {
-        tx = anchor.x + this.facing * (2.8 + flail * (3.2 + osc * 4.6)) * s;
-        ty = anchor.y + (5.2 + flail * (7.0 + Math.cos(this.t * 7.2 + leg.anchor) * 4.0)) * s;
-        if (flail > 0.05) {
-          // look for a floor in front/below, just like the arms in the devlog
-          const probeX = anchor.x + this.facing * (8 + flail * 12) * s;
-          const fy = this.surfaceAt(probeX);
-          if (fy - anchor.y < (leg.l1 + leg.l2) * 0.96) {
-            tx = lerp(tx, probeX, flail * 0.75);
-            ty = lerp(ty, fy - 1, flail * 0.8);
-          }
-        }
-      } else {
-        tx = anchor.x - this.facing * (3.6 + flail * (4.0 - osc * 3.8)) * s;
-        ty = anchor.y + (6.5 + flail * (5.5 + osc * 3.4)) * s;
-      }
-      leg.foot.x = damp(leg.foot.x, tx, 10, dt);
-      leg.foot.y = damp(leg.foot.y, ty, 10, dt);
-      leg.footAngle = damp(leg.footAngle, 0, 6, dt);
-    } else if (this.sliding) {
-      // hands forward, hind feet trailing, belly on the ground
-      leg.step = null;
-      const tx = anchor.x + this.facing * (leg.front ? 8.5 : -7.5) * s;
-      leg.foot.x = damp(leg.foot.x, tx, 16, dt);
-      leg.foot.y = damp(leg.foot.y, this.surfaceAt(leg.foot.x) - 0.3, 18, dt);
-      leg.footAngle = Math.atan2(groundY(leg.foot.x + 2) - groundY(leg.foot.x - 2), 4);
-    } else {
-      // grounded walk / trot
-      const stride = clamp(speed * 0.04, 0, 6) * s;
-      const homeX = anchor.x + this.facing * ((leg.front ? 2.2 : -1.6) * s + stride * (leg.front ? 0.4 : 0.2));
-      const homeY = this.surfaceAt(homeX) - 0.5 * s;
-      const threshold = (4.8 + speed * 0.02) * s;
-      const err = Math.hypot(leg.foot.x - homeX, (leg.foot.y - homeY) * 0.75);
+    const home = this.groundHome(leg, a);
+    const speed = Math.abs(this.vx);
+    const err = Math.hypot(leg.foot.x - home.x, (leg.foot.y - home.y) * 0.7);
+    const threshold = 5.5 + speed * 0.018;
+    leg.stepHome = home;
+    leg.stepErr = err;
+    leg.stepThreshold = threshold;
 
-      if (leg.step) {
-        leg.step.t += dt;
-        const k = clamp(leg.step.t / leg.step.dur, 0, 1);
-        const e = k * k * (3 - 2 * k);
-        leg.foot.x = lerp(leg.step.from.x, leg.step.to.x, e);
-        leg.foot.y = lerp(leg.step.from.y, leg.step.to.y, e) - Math.sin(Math.PI * k) * leg.step.lift;
-        leg.footAngle = lerp(leg.step.fromAngle, leg.step.toAngle, e);
-        if (k >= 1) {
-          leg.foot.x = leg.step.to.x;
-          leg.foot.y = leg.step.to.y;
-          leg.footAngle = leg.step.toAngle;
-          leg.step = null;
-          leg.cooldown = 0.015 + Math.random() * 0.03;
-          this.bobVel -= 0.45 + this.act * 0.7;
-          spawnDust(leg.foot.x, this.surfaceAt(leg.foot.x), 1, 0.3 + speed / 350, true);
-          if (this.isPlayer && speed > 30) audio.step(0.4 + speed / 320, true);
-        }
-      } else {
-        // keep a planted diagonal pair on the ground: the whole ride
-        // should never be airborne in a normal run.
-        const otherPairBusy = this.legs.some(o => o.pair !== leg.pair && o.step);
-        if (leg.cooldown <= 0 && err > threshold && !otherPairBusy && speed > 2) {
-          this.startStep(leg, Math.hypot(leg.foot.x - homeX, leg.foot.y - homeY));
-        }
+    if (leg.step) {
+      leg.step.t += dt;
+      const k = clamp(leg.step.t / leg.step.dur, 0, 1);
+      const e = k * k * (3 - 2 * k);
+      leg.foot.x = lerp(leg.step.from.x, leg.step.to.x, e);
+      leg.foot.y = lerp(leg.step.from.y, leg.step.to.y, e) - Math.sin(Math.PI * k) * leg.step.lift;
+      if (k >= 1) {
+        leg.foot.x = leg.step.to.x;
+        leg.foot.y = leg.step.to.y;
+        leg.step = null;
+        leg.cooldown = 0.025 + Math.random() * 0.03;
+        this.bobVel += 0.45 + this.act * 0.7;
       }
     }
 
     this.solveLeg(leg);
   }
 
-  startStep(leg, distance) {
-    if (leg.step) return;
-    const s = this.s;
-    const anchor = this.legAnchor(leg);
+  scheduleGait(dt) {
+    this.groupCooldown = Math.max(0, this.groupCooldown - dt);
+    if (!this.grounded || this.legs.some(l => l.step) || this.groupCooldown > 0) return;
     const speed = Math.abs(this.vx);
-    const dur = clamp(0.22 - speed * 0.00085, 0.075, 0.18);
-    const predicted = speed * dur;
-    const maxReach = (leg.l1 + leg.l2) * 0.92;
+    if (speed < 2) return;
 
-    const baseAhead = (leg.front ? 3.0 : 0.5) * s + predicted * 0.85;
-    let tx = anchor.x + this.facing * baseAhead;
-    let ty = this.surfaceAt(tx) - 0.5 * s;
-    let dy = ty - anchor.y;
-    const maxX = Math.sqrt(Math.max(0, maxReach * maxReach - dy * dy));
-    if (Math.abs(tx - anchor.x) > maxX) {
-      tx = anchor.x + this.facing * maxX;
-      ty = this.surfaceAt(tx) - 0.5 * s;
+    const groups = [0, 1].map(g => {
+      const legs = this.legs.filter(l => l.group === g && l.stepHome);
+      let maxErr = 0;
+      let maxThreshold = 0;
+      for (const l of legs) {
+        maxErr = Math.max(maxErr, l.stepErr);
+        maxThreshold = Math.max(maxThreshold, l.stepThreshold);
+      }
+      return { g, legs, maxErr, maxThreshold };
+    });
+
+    const ready = groups.filter(x => x.legs.length && x.maxErr > x.maxThreshold * 0.88);
+    if (!ready.length) return;
+
+    let chosen = null;
+    if (this.lastStepGroup >= 0) {
+      const other = ready.find(x => x.g !== this.lastStepGroup);
+      const same = ready.find(x => x.g === this.lastStepGroup);
+      chosen = other && (other.maxErr > other.maxThreshold * 0.55 || !same) ? other : (same || other);
+    } else {
+      chosen = ready.slice().sort((a, b) => b.maxErr - a.maxErr)[0];
     }
+    if (!chosen) return;
 
-    const toAngle = Math.atan2(groundY(tx + 2) - groundY(tx - 2), 4);
+    let started = 0;
+    for (const leg of chosen.legs) {
+      if (!leg.step && leg.cooldown <= 0) {
+        this.startStep(leg, leg.hip, leg.stepHome, speed);
+        this.solveLeg(leg);
+        started++;
+      }
+    }
+    if (started) {
+      this.lastStepGroup = chosen.g;
+      this.groupCooldown = 0.05;
+    }
+  }
+
+  startStep(leg, anchor, home, speed) {
+    const dur = clamp(0.19 - this.act * 0.085, 0.095, 0.2);
+    const lead = (leg.front ? 6 : 4) + speed * dur * 0.85;
+    let tx = home.x + this.facing * lead;
+    const ty = FLOOR - 1.5;
+    const maxReach = (leg.l1 + leg.l2) * 0.92;
+    const dy = ty - anchor.y;
+    if (dy < maxReach) {
+      const maxDx = Math.sqrt(Math.max(0, maxReach * maxReach - dy * dy));
+      tx = anchor.x + clamp(tx - anchor.x, -maxDx, maxDx);
+    }
+    const dx = tx - leg.foot.x;
+    const dist = Math.hypot(dx, ty - leg.foot.y);
     leg.step = {
       from: { x: leg.foot.x, y: leg.foot.y },
       to: { x: tx, y: ty },
-      fromAngle: leg.footAngle,
-      toAngle,
       t: 0,
       dur,
-      lift: (2.5 + Math.min(9, distance * 0.35) + this.act * 1.2) * s,
+      lift: 4 + Math.min(10, dist * 0.28) + this.act * 2,
     };
     leg.cooldown = 0.02 + Math.random() * 0.025;
   }
 
-  solveLegs() {
-    for (const leg of this.legs) this.solveLeg(leg);
-  }
-
   solveLeg(leg) {
-    const bendWorld = (leg.front ? 1 : -1) * this.facing;
+    const bend = (leg.front ? 1 : -1) * this.facing;
     const res = solveIK(
       leg.hip.x, leg.hip.y,
       leg.foot.x, leg.foot.y,
       leg.l1, leg.l2,
-      bendWorld
+      bend
     );
     leg.knee = res.knee;
     leg.ikFoot = res.foot;
   }
 
-  // ----------------------------------------------------------------- tail
+  // ------------------------------------------------------------- tail
 
   updateTail(dt) {
-    const s = this.s;
-    const base = this.spine[this.N - 1];
     const t = this.tail;
-    const anchorX = base.x - this.facing * 1.8 * s;
-    const anchorY = base.y + 0.6 * s;
+    const ax = this.coreHip.x - this.facing * (HIP_R * 0.72);
+    const ay = this.coreHip.y + HIP_R * 0.42;
 
-    t[0].x = anchorX;
-    t[0].y = anchorY;
-    t[0].px = anchorX;
-    t[0].py = anchorY;
+    t[0].x = ax;
+    t[0].y = ay;
+    t[0].px = ax;
+    t[0].py = ay;
 
-    const idle = this.idleBlend;
-    const speed = Math.abs(this.vx);
     const retain = Math.pow(0.5, dt);
     const dt2 = dt * dt;
-
+    const idle = this.stand;
     for (let i = 1; i < this.tailLen; i++) {
       const n = t[i];
       const vx = (n.x - n.px) * retain;
@@ -3030,60 +613,28 @@ class Slugcat {
       n.px = n.x;
       n.py = n.y;
 
-      const gravityT = (this.onGround ? 480 : 120) * s;
-      const lift = (this.onGround ? speed * 2.9 + 40 : speed * 0.8) * s * (i / this.tailLen);
-      const windAcc = (worldTime.wind || 0) * 0.35 * s;
-      const curl = idle * Math.pow(i / this.tailLen, 1.3);
+      const gravity = (this.grounded ? 620 : 180) * (0.8 + i / this.tailLen * 0.4);
+      const curl = idle * Math.pow(i / this.tailLen, 1.4);
+      const sway = Math.sin(this.t * 1.35 + i * 0.62) * 34 * curl;
+      const wag = Math.sin(this.t * 2.0 + i * 0.9) * (6 + Math.abs(this.vx) * 0.04);
 
-      n.x += vx + (windAcc + Math.sin(this.t * 1.1 + i * 0.62) * 50 * s * curl) * dt2;
-      n.y += vy + (gravityT - lift - 80 * s * curl) * dt2;
+      n.x += vx + (sway + wag) * dt2;
+      n.y += vy + (gravity - 200 * curl) * dt2;
 
-      // a lazy wag while trotting
-      n.x += Math.sin(this.wigglePhase * 0.55 + i * 0.8) * (0.02 + speed * 0.00022) * s * (i / this.tailLen);
-      // a little idle curl in the last third
-      n.x += Math.sin(this.t * 1.05 + i * 0.7) * 0.055 * s * curl;
-      n.y -= 0.035 * s * curl;
-
-      // never let the tail drag through the floor
-      const fy = this.surfaceAt(n.x) - this.tailRadii[i] * 0.55;
+      const fy = FLOOR - this.tailRadii[i] * 0.8;
       if (n.y > fy) {
         n.y = fy;
-        n.px = lerp(n.px, n.x, 0.4);
-        n.py = lerp(n.py, n.y, 0.4);
+        n.px = lerp(n.px, n.x, 0.35);
+        n.py = lerp(n.py, n.y, 0.35);
       }
     }
 
-    // in the upright rest pose the tail settles into a long,
-    // ground-skimming curl instead of hanging dead straight.
-    if (idle > 0.01) {
-      const b = this.spine[this.N - 1];
-      const dir = -this.facing;
-      for (let i = 1; i < this.tailLen; i++) {
-        const n = t[i];
-        const tx = b.x + dir * (i * this.tailSeg - 1.2 * s)
-          + Math.sin(this.t * 0.85 + i * 0.55) * 1.2 * s * idle;
-        const lift = i >= 4
-          ? smoothstep((i - 4) / (this.tailLen - 5)) * 20.5 * s
-          : 0;
-        let ty = b.y + 1.1 * s + i * 1.55 * s - lift
-          + Math.sin(this.t * 1.2 + i * 0.7) * 0.55 * s;
-        const fy = this.surfaceAt(tx) - this.tailRadii[i] * 0.65;
-        ty = Math.min(ty, fy);
-        const k = 0.05 * idle * (0.45 + i / this.tailLen);
-        n.x = lerp(n.x, tx, k);
-        n.y = lerp(n.y, ty, k);
-        n.px = lerp(n.px, n.x, 0.55);
-        n.py = lerp(n.py, n.y, 0.55);
-      }
-    }
-
-    // constraints with a stiffness that fades toward the tip
     for (let iter = 0; iter < 3; iter++) {
       for (let i = 1; i < this.tailLen; i++) {
         const a = t[i - 1], b = t[i];
         let dx = b.x - a.x, dy = b.y - a.y;
         const d = Math.hypot(dx, dy) || 0.0001;
-        const diff = (d - this.tailSeg) / d;
+        const diff = (d - 6.3) / d;
         if (i === 1) {
           b.x -= dx * diff; b.y -= dy * diff;
         } else {
@@ -3093,989 +644,467 @@ class Slugcat {
       }
       for (let i = 1; i < this.tailLen - 1; i++) {
         const a = t[i - 1], b = t[i], c = t[i + 1];
-        const k = 0.14 * (1 - i / this.tailLen);
+        const k = 0.16 * (1 - i / this.tailLen);
         b.x += ((a.x + c.x) * 0.5 - b.x) * k;
         b.y += ((a.y + c.y) * 0.5 - b.y) * k;
       }
       for (let i = 1; i < this.tailLen; i++) {
         const n = t[i];
-        const fy = this.surfaceAt(n.x) - this.tailRadii[i] * 0.55;
+        const fy = FLOOR - this.tailRadii[i] * 0.8;
         if (n.y > fy) n.y = fy;
       }
     }
 
-    t[0].x = anchorX;
-    t[0].y = anchorY;
+    // an idle tail curls up off the floor
+    if (idle > 0.02 && this.grounded) {
+      const base = t[0];
+      for (let i = 1; i < this.tailLen; i++) {
+        const n = t[i];
+        const u = i / (this.tailLen - 1);
+        const tx = base.x - this.facing * i * 6.3 + Math.sin(this.t * 1.1 + i * 0.5) * 1.4 * idle;
+        const ty = base.y + 1 + i * 0.5 - u * u * 17 * idle;
+        const fy = FLOOR - this.tailRadii[i] * 0.8;
+        n.x = lerp(n.x, tx, 0.035 * idle);
+        n.y = lerp(n.y, Math.min(ty, fy), 0.035 * idle);
+      }
+      for (let i = 1; i < this.tailLen; i++) {
+        const a = t[i - 1], b = t[i];
+        let dx = b.x - a.x, dy = b.y - a.y;
+        const d = Math.hypot(dx, dy) || 0.0001;
+        const diff = (d - 6.3) / d;
+        if (i === 1) { b.x -= dx * diff; b.y -= dy * diff; }
+        else { a.x += dx * diff * 0.5; a.y += dy * diff * 0.5; b.x -= dx * diff * 0.5; b.y -= dy * diff * 0.5; }
+      }
+    }
   }
 
-  // ----------------------------------------------------------------- face
+  // ------------------------------------------------------------- face
 
   updateFace(dt) {
     this.blinkIn -= dt;
     if (this.blinkIn <= 0) {
       this.blinkT = 0.12;
-      this.blinkIn = 2.3 + Math.random() * 4.8;
+      this.blinkIn = 2.5 + Math.random() * 4.5;
     }
     if (this.blinkT > 0) this.blinkT -= dt;
     this.blink = this.blinkT > 0 ? Math.sin(clamp(1 - this.blinkT / 0.12, 0, 1) * Math.PI) : 0;
 
-    for (const ear of this.ears) {
-      ear.twitchIn -= dt;
-      if (ear.twitchIn <= 0) {
-        ear.twitchIn = 3.5 + Math.random() * 7;
-        ear.vel += (Math.random() < 0.5 ? -1 : 1) * (1.5 + Math.random() * 2.2);
-      }
-      const target = -0.18
-        - Math.abs(this.vx) / runSpeed * 0.5
-        - this.flail * 0.32
-        + (this.squeakT > 0 ? 0.35 : 0)
-        + (ear.side > 0 ? 0.06 : -0.02);
-      const force = (target - ear.rot) * 95 - ear.vel * 12;
-      ear.vel += force * dt;
-      ear.rot = clamp(ear.rot + ear.vel * dt, -1.35, 0.8);
-    }
+    const targetEar = clamp(
+      this.vx * this.facing * 0.00009
+      + this.flail * 0.35
+      + Math.sin(this.t * 0.8) * 0.015,
+      -0.28, 0.45
+    );
+    this.earVel += ((targetEar - this.earTilt) * 90 - this.earVel * 12) * dt;
+    this.earTilt = clamp(this.earTilt + this.earVel * dt, -0.5, 0.6);
+
+    const targetHeadTilt = clamp(
+      this.vy * 0.00022
+      + Math.sin(this.t * 1.9) * 0.01 * (1 - this.act)
+      + this.flail * 0.12,
+      -0.22, 0.24
+    );
+    this.headTilt = damp(this.headTilt, targetHeadTilt, 7, dt);
   }
 
-  // --------------------------------------------------------------- render
+  // ------------------------------------------------------------- draw
 
   draw(ctx) {
-    const s = this.s;
     ctx.save();
 
-    // squash and stretch around the feet
-    const pivotY = this.floorY + 0.5;
-    ctx.translate(this.x, pivotY);
-    ctx.scale(1 + this.squash * 0.16, 1 - this.squash * 0.22);
-    ctx.translate(-this.x, -pivotY);
+    // squash around the floor line
+    const px = this.x;
+    const py = FLOOR;
+    ctx.translate(px, py);
+    ctx.scale(1 + this.squash * 0.14, 1 - this.squash * 0.18);
+    ctx.translate(-px, -py);
 
     this.drawTail(ctx);
-
     for (const leg of this.legs) if (leg.far) this.drawLeg(ctx, leg);
     this.drawBody(ctx);
     for (const leg of this.legs) if (!leg.far) this.drawLeg(ctx, leg);
     this.drawHead(ctx);
 
     ctx.restore();
-
-    if (ui.rig) this.drawRig(ctx);
-  }
-
-  drawShadow(ctx) {
-    const floor = this.surfaceAt(this.x);
-    const height = Math.max(0, floor - (this.y + this.ride));
-    const k = clamp(1 - height / 130, 0.18, 1);
-    const s = this.s;
-    const slope = Math.atan2(groundY(this.x + 2) - groundY(this.x - 2), 4);
-
-    ctx.save();
-    ctx.translate(this.x, floor + 1);
-    ctx.rotate(slope);
-    ctx.scale(1, 0.24);
-    const g = ctx.createRadialGradient(0, 0, 1, 0, 0, 34 * s);
-    g.addColorStop(0, `rgba(5,10,9,${0.33 * k})`);
-    g.addColorStop(0.65, `rgba(5,10,9,${0.18 * k})`);
-    g.addColorStop(1, 'rgba(5,10,9,0)');
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, 34 * s, 7 * s, 0, 0, TAU);
-    ctx.fill();
-    ctx.restore();
   }
 
   drawBody(ctx) {
-    const s = this.s;
-    const chain = smoothChain(this.spine, this.radii, 3);
-    drawTaperedChain(ctx, chain.pts, chain.w, this.tint, COL.inkSoft, 0.85 * s);
+    const hip = this.coreHip;
+    const chest = this.coreChest;
+    const dx = chest.x - hip.x;
+    const dy = chest.y - hip.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = dy / len;
+    const ny = -dx / len;
 
-    // underside shade
-    const belly = edgeChain(chain.pts, chain.w, -1, 0.46);
-    ctx.strokeStyle = 'rgba(127,119,114,0.34)';
-    ctx.lineWidth = 2.6 * s;
-    ctx.beginPath();
-    for (let i = 0; i < belly.length; i++) {
-      if (i === 0) ctx.moveTo(belly[i].x, belly[i].y);
-      else ctx.lineTo(belly[i].x, belly[i].y);
+    // the torso is a short chain of overlapping circles (a paper doll
+    // over the two physics chunks). The dark pass gives one outer edge.
+    const n = 7;
+    const circles = [];
+    for (let i = 0; i < n; i++) {
+      const t = i / (n - 1);
+      const arch = Math.sin(Math.PI * t) * 2.2 * (1 - this.stand * 0.45);
+      const r = lerp(HIP_R, UPPER_R, t) + Math.sin(Math.PI * t) * 2.0;
+      circles.push({
+        x: lerp(hip.x, chest.x, t) + nx * arch,
+        y: lerp(hip.y, chest.y, t) + ny * arch,
+        r,
+      });
     }
-    ctx.stroke();
 
-    // pale rim along the back
-    const back = edgeChain(chain.pts, chain.w, 1, 0.48);
-    ctx.strokeStyle = 'rgba(255,235,209,0.28)';
-    ctx.lineWidth = 0.9 * s;
-    ctx.beginPath();
-    for (let i = 0; i < back.length; i++) {
-      if (i === 0) ctx.moveTo(back[i].x, back[i].y);
-      else ctx.lineTo(back[i].x, back[i].y);
-    }
-    ctx.stroke();
-
-    // a few tiny strands of fur on the back
-    ctx.strokeStyle = 'rgba(118,128,119,0.34)';
-    ctx.lineWidth = 0.55 * s;
-    for (let i = 4; i < chain.pts.length - 5; i += 5) {
-      if (hash(i * 3.7 + this.spawnX * 0.01) < 0.52) continue;
-      const p = back[i];
-      const a = chain.pts[Math.max(0, i - 1)];
-      const b = chain.pts[Math.min(chain.pts.length - 1, i + 1)];
-      let nx = -(b.y - a.y), ny = b.x - a.x;
-      const l = Math.hypot(nx, ny) || 1;
-      const dir = this.facing;
+    ctx.fillStyle = COL.ink;
+    for (const c of circles) {
       ctx.beginPath();
-      ctx.moveTo(p.x, p.y);
-      ctx.lineTo(p.x + nx / l * 1.4 * s - dir * 1.2 * s, p.y + ny / l * 1.4 * s - 0.4 * s);
-      ctx.stroke();
-    }
-
-    // soft socket where the near hind leg meets the body
-    const bodyAngle = Math.atan2(this.spine[this.N - 1].y - this.spine[0].y, this.spine[this.N - 1].x - this.spine[0].x);
-    const hipLeg = this.legs.find(l => !l.front && !l.far);
-    if (hipLeg) {
-      ctx.save();
-      ctx.translate(hipLeg.hip.x, hipLeg.hip.y - 1.5 * s);
-      ctx.rotate(bodyAngle + Math.PI / 2);
-      ctx.fillStyle = 'rgba(92,104,97,0.10)';
-      ctx.beginPath();
-      ctx.ellipse(0, 0, 4.8 * s, 6.5 * s, 0, 0, TAU);
+      ctx.arc(c.x, c.y, c.r + 2.4, 0, TAU);
       ctx.fill();
-      ctx.restore();
+    }
+
+    ctx.fillStyle = COL.body;
+    for (const c of circles) {
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, c.r, 0, TAU);
+      ctx.fill();
+    }
+
+    // tiny joint shadows where the limbs meet the body
+    for (const leg of this.legs) {
+      if (leg.far) continue;
+      const a = leg.hip;
+      ctx.fillStyle = 'rgba(7,16,13,0.14)';
+      ctx.beginPath();
+      ctx.arc(a.x, a.y, leg.front ? 4.2 : 5.4, 0, TAU);
+      ctx.fill();
     }
   }
 
-  drawTail(ctx) {
-    const s = this.s;
-    const pts = this.tail.map(n => ({ x: n.x, y: n.y }));
-    const chain = smoothChain(pts, this.tailRadii, 3);
-    drawTaperedChain(ctx, chain.pts, chain.w, this.tint, COL.inkSoft, 0.8 * s);
+  drawHead(ctx) {
+    const hx = this.headX;
+    const hy = this.headY;
 
-    const belly = edgeChain(chain.pts, chain.w, -1, 0.4);
-    ctx.strokeStyle = 'rgba(111,123,116,0.26)';
-    ctx.lineWidth = 1.4 * s;
-    ctx.beginPath();
-    for (let i = 0; i < belly.length; i++) {
-      if (i === 0) ctx.moveTo(belly[i].x, belly[i].y);
-      else ctx.lineTo(belly[i].x, belly[i].y);
-    }
-    ctx.stroke();
+    ctx.save();
+    ctx.translate(hx, hy);
+    ctx.scale(this.facing, 1);
+    ctx.rotate(this.headTilt);
 
-    const back = edgeChain(chain.pts, chain.w, 1, 0.45);
-    ctx.strokeStyle = 'rgba(255,252,239,0.14)';
-    ctx.lineWidth = 0.7 * s;
+    // head
+    this.circle(ctx, 0, 0, HEAD_R, COL.body, COL.ink, 2.5);
+
+    // ears, both visible on the head rim
+    this.drawEar(ctx, -8.5, -HEAD_R * 0.8, 4.8, 2.1, true);
+    this.drawEar(ctx, 8.0, -HEAD_R * 0.82, 5.4, 2.5, false);
+
+    // eyes
+    const open = clamp(1 - this.blink * 0.96, 0, 1);
+    const near = { x: HEAD_R * 0.45, y: -2.2, rx: 2.9, ry: 4.0 * open };
+    const far = { x: HEAD_R * 0.14, y: -4.7, rx: 2.3, ry: 3.2 * open };
+
+    ctx.fillStyle = COL.eye;
     ctx.beginPath();
-    for (let i = 0; i < back.length; i++) {
-      if (i === 0) ctx.moveTo(back[i].x, back[i].y);
-      else ctx.lineTo(back[i].x, back[i].y);
+    ctx.ellipse(far.x, far.y, far.rx, Math.max(0.25, far.ry), 0, 0, TAU);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(near.x, near.y, near.rx, Math.max(0.25, near.ry), 0, 0, TAU);
+    ctx.fill();
+
+    if (open > 0.25) {
+      ctx.fillStyle = 'rgba(255,252,236,0.55)';
+      ctx.beginPath();
+      ctx.arc(near.x - 0.9, near.y - near.ry * 0.38, 0.8, 0, TAU);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(far.x - 0.7, far.y - far.ry * 0.38, 0.6, 0, TAU);
+      ctx.fill();
     }
+
+    // nose
+    ctx.fillStyle = COL.eye;
+    ctx.beginPath();
+    ctx.ellipse(HEAD_R * 0.92, 3.4, 1.7, 1.25, -0.12, 0, TAU);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  drawEar(ctx, x, y, r, inner, far) {
+    const flop = this.earTilt + (far ? -0.08 : 0.05);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(flop);
+    this.circle(ctx, 0, 0, r, far ? COL.bodyWarm : COL.body, far ? COL.farInk : COL.ink, far ? 1.6 : 1.9);
+    // a quiet inner crease, not a pupil
+    ctx.strokeStyle = far ? 'rgba(53,64,58,0.35)' : 'rgba(53,64,58,0.45)';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.arc(0, -0.6, inner, Math.PI * 0.2, Math.PI * 0.8);
     ctx.stroke();
+    ctx.restore();
   }
 
   drawLeg(ctx, leg) {
-    const s = this.s;
-    const hip = leg.hip;
-    const knee = leg.knee;
-    const foot = leg.ikFoot;
+    const a = leg.hip;
+    const k = leg.knee;
+    const f = leg.ikFoot;
+    const far = leg.far;
+    const fill = far ? COL.far : COL.bodyWarm;
+    const ink = far ? COL.farInk : COL.ink;
+    const w1 = leg.w1;
+    const w2 = leg.w2;
 
-    const fill = leg.far ? '#cfcdc0' : '#e9e5d8';
-    const outline = leg.far ? 'rgba(30,43,38,0.7)' : COL.ink;
-    const hi = leg.far ? 'rgba(255,252,238,0.12)' : 'rgba(255,252,238,0.25)';
-
-    const w1 = leg.width;
-    const w2 = leg.width * (leg.front ? 0.76 : 0.82);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
 
     // outline pass
-    ctx.strokeStyle = outline;
-    ctx.lineWidth = w1 + 1.4 * s;
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = w1 + 2;
     ctx.beginPath();
-    ctx.moveTo(hip.x, hip.y);
-    ctx.lineTo(knee.x, knee.y);
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(k.x, k.y);
     ctx.stroke();
-    ctx.lineWidth = w2 + 1.25 * s;
+    ctx.lineWidth = w2 + 1.7;
     ctx.beginPath();
-    ctx.moveTo(knee.x, knee.y);
-    ctx.lineTo(foot.x, foot.y);
+    ctx.moveTo(k.x, k.y);
+    ctx.lineTo(f.x, f.y);
     ctx.stroke();
 
     // fill pass
     ctx.strokeStyle = fill;
     ctx.lineWidth = w1;
     ctx.beginPath();
-    ctx.moveTo(hip.x, hip.y);
-    ctx.lineTo(knee.x, knee.y);
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(k.x, k.y);
     ctx.stroke();
     ctx.lineWidth = w2;
     ctx.beginPath();
-    ctx.moveTo(knee.x, knee.y);
-    ctx.lineTo(foot.x, foot.y);
+    ctx.moveTo(k.x, k.y);
+    ctx.lineTo(f.x, f.y);
     ctx.stroke();
+
+    // joint and paw
     ctx.fillStyle = fill;
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.arc(knee.x, knee.y, w2 * 0.5, 0, TAU);
-    ctx.fill();
-
-    // a thin highlight on the upper limb
-    ctx.strokeStyle = hi;
-    ctx.lineWidth = 0.6 * s;
-    ctx.beginPath();
-    ctx.moveTo(hip.x - 0.4 * s, hip.y);
-    ctx.lineTo(knee.x - 0.4 * s, knee.y);
-    ctx.stroke();
-
-    // paw
-    ctx.save();
-    ctx.translate(foot.x, foot.y);
-    const fa = clamp(leg.footAngle, -0.55, 0.55);
-    ctx.rotate(fa);
-    ctx.scale(this.facing, 1);
-
-    const pw = leg.front ? 2.7 : 3.4;
-    const ph = leg.front ? 1.5 : 1.85;
-    ctx.fillStyle = fill;
-    ctx.strokeStyle = outline;
-    ctx.lineWidth = 0.9 * s;
-    ctx.beginPath();
-    ctx.ellipse(leg.front ? 0.5 : 0.3, -ph * 0.35, pw, ph, 0, 0, TAU);
+    ctx.arc(k.x, k.y, w2 * 0.55, 0, TAU);
     ctx.fill();
     ctx.stroke();
 
-    ctx.strokeStyle = outline;
-    ctx.lineWidth = 0.55 * s;
-    const toes = leg.front ? 3 : 2;
-    for (let i = 0; i < toes; i++) {
-      const ty = (i - (toes - 1) * 0.5) * (leg.front ? 1.1 : 1.4);
-      ctx.beginPath();
-      ctx.moveTo(leg.front ? 1.9 : 2.2, ty * 0.65);
-      ctx.lineTo(leg.front ? 3.6 : 3.8, ty);
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
-
-  drawEar(ctx, ear, far) {
-    const bx = far ? -5.0 : 1.8;
-    const by = far ? -6.8 : -7.0;
-    ctx.save();
-    ctx.translate(bx, by);
-    ctx.rotate(ear.rot + (far ? -0.38 : 0.3));
-    const sc = (far ? 0.9 : 1.02) * (this.pup ? 1.1 : 1);
-    ctx.scale(sc, sc);
-
+    const paw = leg.front ? 4.7 : 5.3;
     ctx.beginPath();
-    ctx.moveTo(0, 1.0);
-    ctx.bezierCurveTo(-6.1, -1.4, -5.6, -8.0, -1.5, -10.0);
-    ctx.bezierCurveTo(2.1, -8.8, 4.4, -4.4, 2.7, 0.4);
-    ctx.closePath();
-    ctx.fillStyle = far ? '#d2d0c3' : this.tint;
+    ctx.arc(f.x, f.y, paw, 0, TAU);
     ctx.fill();
-    ctx.strokeStyle = far ? 'rgba(37,51,46,0.45)' : COL.ink;
-    ctx.lineWidth = 0.9;
     ctx.stroke();
 
-    // inner ear — muted, not bunny-pink
-    ctx.beginPath();
-    ctx.moveTo(-0.2, -1.3);
-    ctx.bezierCurveTo(-3.0, -3.2, -2.8, -6.2, -1.1, -8.0);
-    ctx.bezierCurveTo(0.7, -6.9, 1.7, -4.0, 0.8, -1.5);
-    ctx.closePath();
-    ctx.fillStyle = far ? 'rgba(120,100,96,0.20)' : 'rgba(189,146,137,0.32)';
-    ctx.fill();
-    ctx.restore();
-  }
-
-  drawHead(ctx) {
-    const s = this.s;
-    const hs = s * (this.pup ? 1.04 : 0.98);
-
-    ctx.save();
-    ctx.translate(this.head.x, this.head.y);
-    ctx.scale(this.facing * hs, hs);
-    ctx.rotate(this.headTilt);
-
-    // ears
-    this.drawEar(ctx, this.ears[0], true);
-    this.drawEar(ctx, this.ears[1], false);
-
-    // head silhouette — round and soft, with just the hint of a snout
-    const headPath = new Path2D();
-    headPath.moveTo(8.4, -0.6);
-    headPath.bezierCurveTo(10.6, 0.4, 10.5, 3.2, 7.8, 5.2);
-    headPath.bezierCurveTo(5.0, 7.4, -1.2, 8.0, -4.9, 5.4);
-    headPath.bezierCurveTo(-9.2, 3.0, -9.9, -3.2, -6.3, -7.2);
-    headPath.bezierCurveTo(-3.2, -10.7, 3.7, -10.8, 7.0, -7.0);
-    headPath.bezierCurveTo(8.1, -5.4, 8.9, -2.6, 8.4, -0.6);
-    headPath.closePath();
-
-    ctx.fillStyle = this.tint;
-    ctx.fill(headPath);
-
-    // soft gradient over the face
-    ctx.save();
-    ctx.clip(headPath);
-    const hg = ctx.createLinearGradient(0, -10, 0, 8);
-    hg.addColorStop(0, 'rgba(255,253,241,0.32)');
-    hg.addColorStop(0.55, 'rgba(255,255,255,0)');
-    hg.addColorStop(1, 'rgba(120,132,124,0.24)');
-    ctx.fillStyle = hg;
-    ctx.fillRect(-12, -12, 24, 22);
-
-    // warm cheek
-    const cheek = ctx.createRadialGradient(4.2, 3.0, 0.3, 4.2, 3.0, 7.5);
-    cheek.addColorStop(0, 'rgba(225,176,161,0.18)');
-    cheek.addColorStop(1, 'rgba(225,176,161,0)');
-    ctx.fillStyle = cheek;
-    ctx.fillRect(-12, -12, 24, 22);
-
-    // soft muzzle plane
-    const muzzle = ctx.createRadialGradient(7.5, 3.8, 0.4, 7.5, 3.8, 5.2);
-    muzzle.addColorStop(0, 'rgba(174,154,145,0.16)');
-    muzzle.addColorStop(1, 'rgba(174,154,145,0)');
-    ctx.fillStyle = muzzle;
-    ctx.fillRect(-12, -12, 24, 22);
-    ctx.restore();
-
-    ctx.strokeStyle = COL.ink;
-    ctx.lineWidth = 1.0;
-    ctx.stroke(headPath);
-
-    // tiny cheek fur wisp
-    // (kept extremely subtle so the head silhouette stays clean)
-
-    // eyes
-    const squint = clamp(this.act * 0.11 + (this.crouch > 0.5 ? 0.08 : 0), 0, 0.2);
-    const widen = this.flail * 0.07;
-    const open = clamp((1 - this.blink * 0.93) * (1 - squint + widen), 0.055, 1.12);
-    const gx = this.gazeX;
-    const gy = this.gazeY;
-
-    const eyes = [
-      { x: -2.7, y: -0.6, rx: 1.85, ry: 2.9, rot: -0.06, far: true },
-      { x: 2.9, y: -0.4, rx: 2.4, ry: 3.6, rot: 0.03, far: false },
-    ];
-    for (const e of eyes) {
-      const ex = e.x + gx * (e.far ? 0.4 : 0.55);
-      const ey = e.y + gy * (e.far ? 0.35 : 0.45);
-      ctx.fillStyle = COL.eye;
+    // a darker socket circle for the near limb
+    if (!far) {
+      ctx.fillStyle = 'rgba(7,16,13,0.32)';
       ctx.beginPath();
-      ctx.ellipse(ex, ey, e.rx, Math.max(0.15, e.ry * open), e.rot, 0, TAU);
-      ctx.fill();
-
-      if (open > 0.3) {
-        ctx.fillStyle = 'rgba(250,248,234,0.72)';
-        ctx.beginPath();
-        ctx.arc(ex - e.rx * 0.3, ey - e.ry * open * 0.4, e.far ? 0.22 : 0.32, 0, TAU);
-        ctx.fill();
-      }
-    }
-
-    // nose
-    ctx.fillStyle = '#2c2220';
-    ctx.beginPath();
-    ctx.ellipse(8.35, 3.15, 1.25, 1.0, -0.12, 0, TAU);
-    ctx.fill();
-    ctx.fillStyle = 'rgba(255,240,230,0.5)';
-    ctx.beginPath();
-    ctx.arc(8.0, 2.8, 0.32, 0, TAU);
-    ctx.fill();
-
-    // mouth line
-    if (this.squeakT <= 0 && this.flail <= 0.52) {
-      ctx.strokeStyle = 'rgba(50,40,37,0.6)';
-      ctx.lineWidth = 0.8;
-      ctx.beginPath();
-      ctx.moveTo(8.35, 4.3);
-      ctx.quadraticCurveTo(7.55, 5.0, 8.55, 5.15);
-      ctx.stroke();
-    }
-
-    // mouth: opens for squeaks or long falls
-    if (this.squeakT > 0 || this.flail > 0.52) {
-      const mh = this.squeakT > 0 ? 0.9 + Math.sin(this.t * 35) * 0.25 : 0.55;
-      ctx.fillStyle = 'rgba(42,32,30,0.7)';
-      ctx.beginPath();
-      ctx.ellipse(6.8, 4.8, 0.95, mh, 0.12, 0, TAU);
+      ctx.arc(a.x, a.y, 2.4, 0, TAU);
       ctx.fill();
     }
-
-    ctx.restore();
   }
 
-  drawRig(ctx) {
-    const s = this.s;
-    ctx.save();
+  drawTail(ctx) {
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    // ground and support
-    ctx.strokeStyle = 'rgba(108,226,198,0.36)';
-    ctx.lineWidth = 0.6;
-    for (let x = this.x - 34; x < this.x + 40; x += 4) {
+    // cosmetic wave on top of the verlet chain
+    const pts = [];
+    for (let i = 0; i < this.tailLen; i++) {
+      const n = this.tail[i];
+      const u = i / (this.tailLen - 1);
+      const wave = Math.sin(this.t * 5.4 + i * 0.55) * (0.8 + this.act * 2.4 + this.stand * 1.2) * u;
+      const slow = Math.sin(this.t * 1.4 + i * 0.5) * 1.1 * this.stand * u;
+      const lift = Math.pow(u, 1.5) * (this.act * 4.5 + this.stand * 9.0);
+      pts.push({ x: n.x + wave + slow, y: n.y - lift });
+    }
+
+    for (let i = 1; i < this.tailLen; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      ctx.strokeStyle = COL.ink;
+      ctx.lineWidth = this.tailRadii[i - 1] + this.tailRadii[i] + 3;
       ctx.beginPath();
-      ctx.moveTo(x, groundY(x));
-      ctx.lineTo(x + 2.6, groundY(x));
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+    for (let i = 1; i < this.tailLen; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      ctx.strokeStyle = i > this.tailLen - 3 ? COL.bodyWarm : COL.body;
+      ctx.lineWidth = this.tailRadii[i - 1] + this.tailRadii[i];
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
       ctx.stroke();
     }
 
-    // spine
-    ctx.strokeStyle = 'rgba(119,226,206,0.82)';
-    ctx.lineWidth = 0.8;
-    ctx.beginPath();
-    for (let i = 0; i < this.spine.length; i++) {
-      if (i === 0) ctx.moveTo(this.spine[i].x, this.spine[i].y);
-      else ctx.lineTo(this.spine[i].x, this.spine[i].y);
-    }
-    ctx.stroke();
+    const n = pts[this.tailLen - 1];
+    this.circle(ctx, n.x, n.y, this.tailRadii[this.tailLen - 1], COL.bodyWarm, COL.ink, 1.6);
+  }
 
-    for (let i = 0; i < this.spine.length; i++) {
-      const p = this.spine[i];
-      ctx.strokeStyle = 'rgba(119,226,206,0.25)';
-      ctx.lineWidth = 0.5;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, this.radii[i], 0, TAU);
-      ctx.stroke();
-      ctx.fillStyle = i === 0 ? '#f2d494' : 'rgba(119,226,206,0.9)';
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, 0.9, 0, TAU);
-      ctx.fill();
-    }
-
-    // head anchor
-    ctx.strokeStyle = 'rgba(242,212,148,0.8)';
-    ctx.lineWidth = 0.7;
+  drawShadow(ctx) {
+    const height = Math.max(0, (FLOOR - RIDE) - this.y);
+    const a = clamp(1 - height / 280, 0.18, 1);
+    ctx.save();
+    ctx.fillStyle = `rgba(0,0,0,${0.28 * a})`;
     ctx.beginPath();
-    ctx.arc(this.head.x, this.head.y, 9 * s, 0, TAU);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(this.head.x, this.head.y);
-    ctx.lineTo(this.head.x + this.facing * 13 * s, this.head.y);
-    ctx.stroke();
-
-    // legs
-    for (const leg of this.legs) {
-      const col = leg.far ? 'rgba(244,197,109,0.45)' : 'rgba(244,197,109,0.9)';
-      ctx.strokeStyle = col;
-      ctx.lineWidth = 0.8;
-      ctx.beginPath();
-      ctx.moveTo(leg.hip.x, leg.hip.y);
-      ctx.lineTo(leg.knee.x, leg.knee.y);
-      ctx.lineTo(leg.ikFoot.x, leg.ikFoot.y);
-      ctx.stroke();
-      ctx.fillStyle = col;
-      for (const p of [leg.hip, leg.knee, leg.ikFoot]) {
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, 1.1, 0, TAU);
-        ctx.fill();
-      }
-      // foot target
-      ctx.strokeStyle = 'rgba(255,143,92,0.9)';
-      ctx.lineWidth = 0.65;
-      ctx.beginPath();
-      ctx.moveTo(leg.foot.x - 2.2, leg.foot.y - 2.2);
-      ctx.lineTo(leg.foot.x + 2.2, leg.foot.y + 2.2);
-      ctx.moveTo(leg.foot.x + 2.2, leg.foot.y - 2.2);
-      ctx.lineTo(leg.foot.x - 2.2, leg.foot.y + 2.2);
-      ctx.stroke();
-    }
-
-    // tail
-    ctx.strokeStyle = 'rgba(220,148,197,0.8)';
-    ctx.lineWidth = 0.7;
-    ctx.beginPath();
-    for (let i = 0; i < this.tail.length; i++) {
-      if (i === 0) ctx.moveTo(this.tail[i].x, this.tail[i].y);
-      else ctx.lineTo(this.tail[i].x, this.tail[i].y);
-    }
-    ctx.stroke();
-    for (let i = 1; i < this.tail.length; i++) {
-      ctx.fillStyle = 'rgba(220,148,197,0.65)';
-      ctx.beginPath();
-      ctx.arc(this.tail[i].x, this.tail[i].y, 0.8, 0, TAU);
-      ctx.fill();
-    }
-
-    // velocity and root
-    ctx.strokeStyle = 'rgba(255,250,231,0.75)';
-    ctx.lineWidth = 0.8;
-    ctx.beginPath();
-    ctx.moveTo(this.x, this.y);
-    ctx.lineTo(this.x + this.vx * 0.16, this.y + this.vy * 0.16);
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(255,250,231,0.9)';
-    ctx.beginPath();
-    ctx.arc(this.x, this.y, 1.2, 0, TAU);
+    ctx.ellipse(this.x, FLOOR + 1, 64 * (0.7 + a * 0.3), 8 * (0.7 + a * 0.3), 0, 0, TAU);
     ctx.fill();
-
     ctx.restore();
   }
 
-  // __CHARACTER_RENDER_END__
-}
+  circle(ctx, x, y, r, fill, stroke, lw) {
+    ctx.fillStyle = fill;
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = lw;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, TAU);
+    ctx.fill();
+    ctx.stroke();
+  }
 
-// ------------------------------------------------------------- rig helpers
+  stateName() {
+    if (!this.grounded) return this.flail > 0.32 ? 'flail' : 'air';
+    if (this.stand > 0.55 && Math.abs(this.vx) < 8) return 'stand';
+    if (Math.abs(this.vx) > RUN * 0.78) return 'run';
+    if (Math.abs(this.vx) > 7) return 'crawl';
+    return 'settle';
+  }
+}
 
 function solveIK(ax, ay, tx, ty, l1, l2, bend) {
   let dx = tx - ax;
   let dy = ty - ay;
   let d = Math.hypot(dx, dy) || 0.0001;
   const minD = Math.abs(l1 - l2) + 0.5;
-  const maxD = l1 + l2 - 0.35;
+  const maxD = l1 + l2 - 0.4;
   if (d < minD) {
     dx = dx / d * minD;
     dy = dy / d * minD;
     d = minD;
-    tx = ax + dx;
-    ty = ay + dy;
   } else if (d > maxD) {
     dx = dx / d * maxD;
     dy = dy / d * maxD;
     d = maxD;
-    tx = ax + dx;
-    ty = ay + dy;
   }
+  tx = ax + dx;
+  ty = ay + dy;
   const base = Math.atan2(dy, dx);
   const cosA = clamp((l1 * l1 + d * d - l2 * l2) / (2 * l1 * d), -1, 1);
   const a = Math.acos(cosA);
   const ang = base + bend * a;
   return {
     knee: { x: ax + Math.cos(ang) * l1, y: ay + Math.sin(ang) * l1 },
-    foot: { x: ax + dx, y: ay + dy },
+    foot: { x: tx, y: ty },
   };
 }
 
-function catmullPoint(p0, p1, p2, p3, t) {
-  const t2 = t * t;
-  const t3 = t2 * t;
-  return {
-    x: 0.5 * ((2 * p1.x) + (-p0.x + p2.x) * t + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3),
-    y: 0.5 * ((2 * p1.y) + (-p0.y + p2.y) * t + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3),
-  };
-}
+// ---------------------------------------------------------------- game
 
-function smoothChain(points, radii, subdiv) {
-  const n = points.length;
-  const pts = [];
-  const w = [];
-  if (n < 2) return { pts: points.slice(), w: radii.slice() };
-  for (let i = 0; i < n - 1; i++) {
-    const p0 = points[Math.max(0, i - 1)];
-    const p1 = points[i];
-    const p2 = points[i + 1];
-    const p3 = points[Math.min(n - 1, i + 2)];
-    for (let j = 0; j < subdiv; j++) {
-      const t = j / subdiv;
-      pts.push(catmullPoint(p0, p1, p2, p3, t));
-      w.push(lerp(radii[i], radii[i + 1], smoothstep(t)));
-    }
-  }
-  pts.push({ x: points[n - 1].x, y: points[n - 1].y });
-  w.push(radii[n - 1]);
-  return { pts, w };
-}
-
-function edgeChain(pts, widths, side, factor) {
-  const out = [];
-  for (let i = 0; i < pts.length; i++) {
-    const a = pts[Math.max(0, i - 1)];
-    const b = pts[Math.min(pts.length - 1, i + 1)];
-    let tx = b.x - a.x;
-    let ty = b.y - a.y;
-    const l = Math.hypot(tx, ty) || 1;
-    tx /= l; ty /= l;
-    const nx = ty;
-    const ny = -tx;
-    out.push({
-      x: pts[i].x + nx * widths[i] * factor * side,
-      y: pts[i].y + ny * widths[i] * factor * side,
-    });
-  }
-  return out;
-}
-
-function drawTaperedChain(ctx, pts, widths, fill, outline, outlineExtra) {
-  ctx.save();
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-
-  // outline first, so the filled segments hide every internal seam
-  ctx.strokeStyle = outline;
-  for (let i = 0; i < pts.length - 1; i++) {
-    ctx.lineWidth = widths[i] + widths[i + 1] + outlineExtra * 2;
-    ctx.beginPath();
-    ctx.moveTo(pts[i].x, pts[i].y);
-    ctx.lineTo(pts[i + 1].x, pts[i + 1].y);
-    ctx.stroke();
-  }
-
-  ctx.strokeStyle = fill;
-  for (let i = 0; i < pts.length - 1; i++) {
-    ctx.lineWidth = widths[i] + widths[i + 1];
-    ctx.beginPath();
-    ctx.moveTo(pts[i].x, pts[i].y);
-    ctx.lineTo(pts[i + 1].x, pts[i + 1].y);
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-// ======================================================================
-//  game state
-// ======================================================================
-
-    let player = new Slugcat({ x: 48, player: true, facing: 1, scale: 1.25 });
-const pup = new Slugcat({ x: player.x - 74, facing: 1, scale: 0.62, pup: true, speedScale: 0.82 });
-let pupJumpCooldown = 0;
-cam.x = player.x + 46;
-cam.y = player.y - 30;
-
-resetAmbient();
+const rig = new Slugcat();
+const cam = { x: 0 };
 
 function resetWorld() {
-  player.reset(player.spawnX);
-  player.facing = 1;
-  pup.reset(player.x - 70);
-  pup.facing = 1;
-  cam.x = player.x + 46;
-  cam.y = player.y - 30;
-  cam.shake = 0;
-  cam.flash = 0;
-  resetAmbient();
-  audio.step(0.7, true);
-}
-
-// ---------------------------------------------------------------- mouse
-
-function updateMouseWorld() {
-  const px = (mouse.cx * view.dpr - view.ox) / view.scale;
-  const py = (mouse.cy * view.dpr - view.oy) / view.scale;
-  mouse.x = cam.x + px - VW / 2;
-  mouse.y = cam.y + py - VH / 2;
-}
-
-// ---------------------------------------------------------------- camera
-
-function updateCamera(dt) {
-  const lookAhead = clamp(player.vx * 0.30, -58, 64) + player.facing * 15;
-  let mousePull = 0;
-  if (mouse.moved) mousePull = clamp((mouse.x - player.x) * 0.045, -20, 20);
-  const targetX = player.x + lookAhead + mousePull;
-  let targetY = player.y - 29 + clamp(player.vy * 0.045, -14, 18);
-  if (player.sliding) targetY += 5;
-
-  cam.x = damp(cam.x, targetX, 4.1, dt);
-  cam.y = damp(cam.y, targetY, 3.8, dt);
-  cam.y = Math.min(cam.y, groundY(cam.x) - 38);
-  cam.y = Math.max(cam.y, -500);
-
-  cam.shake = Math.max(0, cam.shake - dt * 7);
-  const sh = cam.shake * cam.shake * 0.8;
-  cam.shakeX = (Math.random() * 2 - 1) * sh;
-  cam.shakeY = (Math.random() * 2 - 1) * sh * 0.7;
-}
-
-// ---------------------------------------------------------------- tick
-
-let last = performance.now();
-let accumulator = 0;
-const STEP = 1 / 120;
-
-function updatePup(dt) {
-  const s = pup.s;
-  pupJumpCooldown = Math.max(0, pupJumpCooldown - dt);
-
-  const targetX = player.x - player.facing * (40 * s + 12);
-  const dx = targetX - pup.x;
-  const distToPlayer = Math.abs(player.x - pup.x);
-  pup.speedScale = distToPlayer > 72 ? 1.15 : 0.96;
-  let move = 0;
-  if (Math.abs(dx) > 7 * s) {
-    move = clamp(dx / (34 * s), -0.9, 0.9);
-    if (Math.abs(move) < 0.25) move = sign(dx) * 0.25;
-  }
-
-  let jumpPressed = false;
-  if (pup.onGround && pupJumpCooldown <= 0) {
-    if (player.squeakT > 0.2 && distToPlayer < 110) {
-      pup.squeakT = Math.max(pup.squeakT, 0.2);
-      jumpPressed = true;
-      pupJumpCooldown = 0.7;
-    } else if (player.y < pup.y - 22 && distToPlayer < 90) {
-      jumpPressed = true;
-      pupJumpCooldown = 0.9;
-    } else if (player.vy < -110 && distToPlayer < 80 && Math.random() < 0.02) {
-      jumpPressed = true;
-      pupJumpCooldown = 0.8;
-    }
-  }
-
-  pup.setLook(player.x, player.y - 12 + Math.sin(worldTime.t * 0.9) * 4);
-  if (Math.abs(dx) < 5 * s && player.idleBlend > 0.4) {
-    const toward = sign(player.x - pup.x);
-    if (toward) pup.facing = toward;
-  }
-
-  pup.update(dt, {
-    move,
-    jump: jumpPressed || pup.vy < -30,
-    jumpPressed,
-    down: false,
-    downPressed: false,
-    sprint: distToPlayer > 95 || Math.abs(dx) > 95,
-  });
-
-  if (Math.abs(pup.x - player.x) > 300 || pup.y > 900) {
-    spawnDust(pup.x, pup.floorY, 3, 0.55, false);
-    pup.reset(player.x - player.facing * 58);
-  }
+  rig.reset();
+  cam.x = 0;
 }
 
 function tick(dt) {
-  updateMouseWorld();
-  let lookX = mouse.x;
-  let lookY = mouse.y;
-  if (!mouse.moved) {
-    const glancePup = player.idleBlend > 0.7 && Math.sin(worldTime.t * 0.31 + 0.8) > 0.55;
-    if (glancePup) {
-      lookX = pup.head.x;
-      lookY = pup.head.y - 4;
-    } else {
-      lookX = player.x + player.facing * 70;
-      lookY = player.y - 10;
-    }
-  }
-  player.setLook(lookX, lookY);
-
   const ctrl = {
     move: ((keys.KeyD || keys.ArrowRight) ? 1 : 0) - ((keys.KeyA || keys.ArrowLeft) ? 1 : 0),
     jump: !!(keys.Space || keys.KeyW || keys.ArrowUp),
     jumpPressed: press.jump,
-    down: !!(keys.KeyS || keys.ArrowDown),
-    downPressed: press.down,
-    sprint: !!(keys.ShiftLeft || keys.ShiftRight || keys.ControlLeft || keys.ControlRight),
+    sprint: !!(keys.ShiftLeft || keys.ShiftRight),
   };
   press.jump = false;
-  press.down = false;
 
-  player.update(dt, ctrl);
-  updatePup(dt);
-  updateWeather(dt);
-  updateCamera(dt);
+  rig.update(dt, ctrl);
+
+  const targetCam = rig.x + rig.facing * 18 + clamp(rig.vx * 0.16, -38, 38);
+  cam.x = damp(cam.x, targetCam, 4.2, dt);
 }
 
-// ---------------------------------------------------------------- world render
+// ---------------------------------------------------------------- render
 
-function render() {
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.globalAlpha = 1;
-  ctx.globalCompositeOperation = 'source-over';
+function drawStage() {
+  ctx.fillStyle = COL.bg;
+  ctx.fillRect(0, 0, VW, VH);
+  ctx.fillStyle = COL.ground;
+  ctx.fillRect(0, FLOOR_SCREEN, VW, VH - FLOOR_SCREEN);
 
-  drawSky();
-  drawWeatherSky();
-  drawFarSkyline();
-  drawFogBand(VH * 0.55, 70, 0.18, '201,201,178', cam.x * 0.02 + worldTime.t * 2.2);
-  drawMidRuins();
-  drawFogBand(VH * 0.63, 58, 0.14, '184,187,166', cam.x * 0.04 + worldTime.t * 1.4);
-  drawViaduct();
-  drawFogBand(VH * 0.67, 46, 0.11, '174,179,159', cam.x * 0.06 + worldTime.t * 1.1);
-  drawNearRuins();
-  drawFogBand(VH * 0.69, 48, 0.10, '166,172,153', cam.x * 0.08 + worldTime.t * 0.8);
-  drawOverhang();
-  drawLightShafts();
+  ctx.fillStyle = COL.floor;
+  ctx.fillRect(0, FLOOR_SCREEN, VW, 1);
 
-  // distant rain is screen-space, behind the terrain
-  drawRain(false);
-
-  const x0 = cam.x - VW / 2 - 100;
-  const x1 = cam.x + VW / 2 + 100;
-
-  ctx.save();
-  ctx.translate(VW / 2 - cam.x + cam.shakeX, VH / 2 - cam.y + cam.shakeY);
-
-  drawGround(x0, x1);
-  for (const p of platformsNear(x0, x1)) {
-    drawPlatform(p, Math.abs(p.x - player.x) < 120);
+  // floor ticks show horizontal motion without adding a background
+  const spacing = 64;
+  const startX = Math.floor((cam.x - VW / ZOOM / 2) / spacing) * spacing;
+  const endX = cam.x + VW / ZOOM / 2 + spacing;
+  for (let x = startX; x < endX; x += spacing) {
+    const sx = VW / 2 + (x - cam.x) * ZOOM;
+    if (sx < -4 || sx > VW + 4) continue;
+    const strong = Math.round(x / spacing) % 5 === 0;
+    ctx.fillStyle = strong ? COL.tickStrong : COL.tick;
+    ctx.fillRect(Math.round(sx), FLOOR_SCREEN, 1, strong ? 13 : 6);
   }
-
-  drawRipples();
-  drawMotes();
-  drawFlies();
-  drawParticles(false);
-
-  pup.drawShadow(ctx);
-  pup.draw(ctx);
-  player.drawShadow(ctx);
-  player.draw(ctx);
-
-  drawParticles(true);
-  ctx.restore();
-
-  drawFogBand(VH * 0.72, 26, 0.055, '172,178,161', cam.x * 0.1 + worldTime.t * 0.5);
-  drawForegroundVines();
-  drawRain(true);
-  drawForegroundGrass();
-  drawForegroundLedge();
-  drawColorGrade();
-  drawScreenVignette();
-
-  // blit the tiny world up to the display
-  sctx.setTransform(1, 0, 0, 1, 0, 0);
-  sctx.imageSmoothingEnabled = false;
-  sctx.fillStyle = '#070b0a';
-  sctx.fillRect(0, 0, screen.width, screen.height);
-  sctx.drawImage(off, view.ox, view.oy, VW * view.scale, VH * view.scale);
-
-  drawHUD();
 }
 
-// ---------------------------------------------------------------- HUD
-
-function hudFont(size, weight = 400) {
-  sctx.font = `${weight} ${size}px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace`;
-}
-
-function spacedText(text, x, y, spacing, align = 'left') {
-  let total = 0;
-  for (const ch of text) total += sctx.measureText(ch).width + spacing;
-  total -= spacing;
-  let cx = align === 'right' ? x - total : x;
-  for (const ch of text) {
-    sctx.fillText(ch, cx, y);
-    cx += sctx.measureText(ch).width + spacing;
-  }
-  return total;
-}
-
-function drawKeycap(label, x, y, h = 15, sc = 1) {
-  hudFont(8 * sc, 600);
-  const w = Math.ceil(sctx.measureText(label).width) + 10 * sc;
-  sctx.fillStyle = 'rgba(9,15,13,0.52)';
-  sctx.strokeStyle = 'rgba(220,226,208,0.15)';
-  sctx.lineWidth = Math.max(0.7, sc);
-  sctx.beginPath();
-  sctx.roundRect(x + 0.5, y + 0.5, w - 1, h - 1, 2.5 * sc);
-  sctx.fill();
-  sctx.stroke();
-  sctx.fillStyle = 'rgba(231,234,217,0.72)';
-  sctx.fillText(label, x + 5 * sc, y + 10.2 * sc);
-  return w;
-}
-
-function drawHUD() {
+function drawHud() {
   if (!ui.hud) return;
   const dpr = view.dpr;
-  const vx = view.ox / dpr;
-  const vy = view.oy / dpr;
-  const vw = VW * view.scale / dpr;
-  const vh = VH * view.scale / dpr;
+  const vx = view.vx;
+  const vy = view.vy;
+  const vw = view.vw;
+  const vh = view.vh;
   if (vw < 240 || vh < 160) return;
 
-  const sc = clamp(vh / 720, 0.85, 1.7);
-
+  const sc = clamp(vh / 540, 0.9, 1.8);
   sctx.save();
   sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   sctx.textBaseline = 'alphabetic';
   sctx.textAlign = 'left';
 
-  const pad = clamp(vw * 0.032, 15, 27) * sc;
+  const pad = clamp(vw * 0.028, 16, 30) * sc;
   const left = vx + pad;
   const right = vx + vw - pad;
   const top = vy + pad;
   const bottom = vy + vh - pad;
 
-  // title
-  hudFont(12.5 * sc, 600);
-  sctx.fillStyle = 'rgba(237,236,221,0.9)';
-  spacedText('SLUGCAT', left, top + 12 * sc, 3.9 * sc);
-  hudFont(7.4 * sc, 400);
-  sctx.fillStyle = 'rgba(218,224,207,0.38)';
-  spacedText('A PROCEDURAL CREATURE STUDY', left, top + 25 * sc, 1.35 * sc);
+  sctx.font = `600 ${12 * sc}px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace`;
+  sctx.fillStyle = 'rgba(240,238,224,0.86)';
+  drawSpaced('SLUGCAT', left, top + 12 * sc, 3.4 * sc);
+  sctx.font = `400 ${7.4 * sc}px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace`;
+  sctx.fillStyle = 'rgba(221,226,209,0.34)';
+  drawSpaced('TWO-CHUNK PROCEDURAL RIG', left, top + 25 * sc, 1.2 * sc);
 
-  // divider + state
-  sctx.fillStyle = 'rgba(211,224,207,0.14)';
-  sctx.fillRect(left, top + 35 * sc, Math.min(158 * sc, vw * 0.36), Math.max(1, sc));
+  const state = rig.stateName().toUpperCase();
+  sctx.font = `600 ${8.4 * sc}px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace`;
+  const air = !rig.grounded;
+  sctx.fillStyle = air ? `rgba(217,194,139,0.92)` : 'rgba(169,215,194,0.78)';
+  drawSpacedRight(state, right, top + 11 * sc, 1.7 * sc);
 
-  const state = player.stateName;
-  hudFont(8.4 * sc, 600);
-  const stateText = state.toUpperCase();
-  sctx.fillStyle = state === 'air' || state === 'flail'
-    ? 'rgba(231,193,125,0.9)'
-    : 'rgba(167,214,190,0.9)';
-  const stateW = spacedText(stateText, left, top + 49 * sc, 1.8 * sc);
+  sctx.fillStyle = 'rgba(211,224,207,0.12)';
+  sctx.fillRect(right - 120 * sc, top + 20 * sc, 120 * sc, 1);
 
-  // four little contact lights / gait readout
-  hudFont(7.2 * sc, 400);
-  const infoX = left + stateW + 15 * sc;
-  sctx.fillStyle = 'rgba(213,222,206,0.32)';
-  sctx.fillText(
-    player.onGround ? (player.sliding ? 'belly slide' : 'grounded') : player.flail > 0.35 ? 'reaching' : 'airborne',
-    infoX, top + 49 * sc
-  );
-  for (let i = 0; i < player.legs.length; i++) {
-    const leg = player.legs[i];
-    const done = !leg.step;
-    sctx.fillStyle = done ? 'rgba(167,214,190,0.55)' : 'rgba(213,222,206,0.12)';
-    sctx.beginPath();
-    sctx.arc(infoX + 3 * sc + i * 8 * sc, top + 58 * sc, 1.7 * sc, 0, TAU);
-    sctx.fill();
-  }
+  sctx.font = `400 ${7.2 * sc}px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace`;
+  sctx.fillStyle = 'rgba(216,224,208,0.32)';
+  drawSpacedRight('A / D  MOVE     SHIFT  RUN     SPACE  JUMP', right, bottom - 4 * sc, 0.2 * sc);
 
-  // top right weather
-  hudFont(7.4 * sc, 500);
-  sctx.fillStyle = 'rgba(222,228,211,0.42)';
-  scaledRightText('RAIN / HEAVY', right, top + 10 * sc, 1.1 * sc);
-  hudFont(7 * sc, 400);
-  sctx.fillStyle = 'rgba(222,228,211,0.22)';
-  const cycle = 'CYCLE 001';
-  scaledRightText(cycle, right, top + 22 * sc, 0.8 * sc);
-
-  if (ui.rig) {
-    hudFont(7.2 * sc, 600);
-    sctx.fillStyle = 'rgba(242,199,117,0.9)';
-    scaledRightText('RIG VIEW', right, top + 39 * sc, 1.4 * sc);
-    hudFont(6.6 * sc, 400);
-    sctx.fillStyle = 'rgba(218,225,207,0.32)';
-    scaledRightText('cyan spine · gold IK · pink tail', right, top + 49 * sc, 0.4 * sc);
-  }
-
-  // bottom left controls
-  let kx = left;
-  const ky = bottom - 15 * sc;
-  const narrow = vw < 660 * sc;
-  const entries = narrow
-    ? [['A / D', 'move'], ['SPACE', 'jump'], ['SHIFT', 'run']]
-    : [['A / D', 'move'], ['SPACE', 'jump'], ['SHIFT', 'run'], ['S', 'slide'], ['MOUSE', 'look']];
-  for (const [key, label] of entries) {
-    const kw = drawKeycap(key, kx, ky, 15 * sc, sc);
-    hudFont(7.5 * sc, 400);
-    sctx.fillStyle = 'rgba(216,224,208,0.35)';
-    sctx.fillText(label, kx + kw + 5 * sc, ky + 10 * sc);
-    kx += kw + 7 * sc + sctx.measureText(label).width + 13 * sc;
-  }
-
-  // bottom right actions
-  hudFont(7.2 * sc, 400);
-  sctx.fillStyle = 'rgba(216,224,208,0.3)';
-  const hint = narrow
-    ? 'V rig · H hud'
-    : 'Q squeak · V rig · H hud · F fullscreen · M sound';
-  let hx = right;
-  for (let i = hint.length - 1; i >= 0; i--) {
-    const ch = hint[i];
-    const w = sctx.measureText(ch).width;
-    hx -= w;
-    sctx.fillText(ch, hx, bottom - 4 * sc);
-    hx -= 0.35 * sc;
-  }
-
-  // sound state dot
-  if (audio.started) {
-    sctx.fillStyle = audio.muted ? 'rgba(231,193,125,0.5)' : 'rgba(167,214,190,0.6)';
-    sctx.beginPath();
-    sctx.arc(right - 3 * sc, bottom - 15 * sc, 2.2 * sc, 0, TAU);
-    sctx.fill();
-  }
+  sctx.fillStyle = 'rgba(216,224,208,0.24)';
+  drawSpaced('R RESET     H HUD     F FULLSCREEN', left, bottom - 4 * sc, 0.2 * sc);
 
   sctx.restore();
 }
 
-// scaledRightText draws right-aligned text with a tiny bit of letterspacing.
-function scaledRightText(text, x, y, spacing) {
+function drawSpaced(text, x, y, spacing) {
+  let cx = x;
+  for (const ch of text) {
+    sctx.fillText(ch, cx, y);
+    cx += sctx.measureText(ch).width + spacing;
+  }
+}
+
+function drawSpacedRight(text, x, y, spacing) {
   let total = 0;
   for (const ch of text) total += sctx.measureText(ch).width + spacing;
   total -= spacing;
@@ -4086,38 +1115,58 @@ function scaledRightText(text, x, y, spacing) {
   }
 }
 
-// ---------------------------------------------------------------- main loop
+function render() {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+  drawStage();
+
+  // flat room, camera only moves horizontally
+  ctx.save();
+  ctx.setTransform(
+    ZOOM, 0, 0, ZOOM,
+    VW / 2 - cam.x * ZOOM,
+    FLOOR_SCREEN - FLOOR * ZOOM
+  );
+
+  rig.drawShadow(ctx);
+  rig.draw(ctx);
+
+  ctx.restore();
+
+  sctx.setTransform(1, 0, 0, 1, 0, 0);
+  sctx.imageSmoothingEnabled = true;
+  sctx.fillStyle = '#070b0a';
+  sctx.fillRect(0, 0, screen.width, screen.height);
+  sctx.drawImage(off, view.ox, view.oy, VW * view.scale, VH * view.scale);
+
+  drawHud();
+}
+
+// ---------------------------------------------------------------- loop
+
+let last = performance.now();
+let acc = 0;
+const STEP = 1 / 120;
 
 function frame(now) {
-  const raw = Math.min(0.08, (now - last) / 1000);
+  const raw = Math.min(0.05, (now - last) / 1000);
   last = now;
-  accumulator += raw;
-
+  acc += raw;
   let steps = 0;
-  while (accumulator >= STEP && steps < 6) {
+  while (acc >= STEP && steps < 6) {
     tick(STEP);
-    accumulator -= STEP;
+    acc -= STEP;
     steps++;
   }
-  if (steps === 6) accumulator = 0;
-
+  if (steps === 6) acc = 0;
   render();
   requestAnimationFrame(frame);
 }
 
-// initial camera settle and run
-updateMouseWorld();
-cam.x = player.x + 46;
-cam.y = player.y - 30;
+// tiny handle for tinkering
+window.__slug = { rig, cam, resetWorld };
+
 requestAnimationFrame(frame);
-
-// keep the cursor meaningful before the first mouse move
-mouse.cx = window.innerWidth * 0.68;
-mouse.cy = window.innerHeight * 0.44;
-
-// a small handle for tinkering in the console
-window.__slug = { player, pup, cam, keys, press, audio, worldTime, groundY, platformsNear };
-
 
 })();
 </script>
